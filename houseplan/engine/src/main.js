@@ -64,6 +64,7 @@ const SW = D.size[0], SD = D.size[1], S = Math.max(SW, SD), CX = SW / 2, CY = SD
 const W = (x, y, h = 0) => new THREE.Vector3(x - CX, h, CY - y);
 const EYE = 1.6;
 const PLAN = D.plan || null;
+const SNAP = !!D.snap;                   // the white model: one snapshot per room for the designer, then stop
 const H = (PLAN && PLAN.wall_height) || D.wall_height || 2.6;
 const ROOMS = (D.rooms || []).filter(r => r && r.x && r.y && r.x[1] > r.x[0] && r.y[1] > r.y[0]);
 const rc = r => [(r.x[0] + r.x[1]) / 2, (r.y[0] + r.y[1]) / 2];
@@ -416,7 +417,7 @@ scene.traverse(n => {
 
 // ---------- camera path, worked out from the rooms ----------
 const V = (x, y, h = EYE) => W(x, y, h);
-const KF = [], STEPS = [], CARDS = [], VEILS = [];   // VEILS: [from, to, photo] the room's photo fades in at its stop
+const KF = [], STEPS = [], CARDS = [], VEILS = [], SHOTS = [];   // VEILS: [from, to, photo] the room's photo fades in at its stop
 function key(t, p, l, o = {}) { KF.push({ t, p: p.clone(), l: l.clone(), fov: o.fov ?? 60, k: o.k ?? 0, sx: o.sx ?? 0, hold: !!o.hold }); }
 const holdAt = (t0, t1, p0, p1, l0, l1, card, o = {}) => { key(t0, p0, l0, { ...o, hold: true }); key(t1, p1, l1, { ...o, hold: true }); STEPS.push([t0, t1]); CARDS.push(card); };
 const heroH = 1.3 * Math.max(SW + PM * 2, (SD + PM * 2) * 1.25);
@@ -449,6 +450,10 @@ ROOMS.forEach((r, i) => {
   if (i === 0 && inside(r, prev[0], prev[1]) && gap(prev) >= 0.42 * diag) stand = prev;
   let far = [cx + (cx - stand[0]) * 0.6, cy + (cy - stand[1]) * 0.6];
   if (aim) { const k = Math.max(1, 1.2 / Math.max(0.3, gap(stand))); far = [stand[0] + (aim[0] - stand[0]) * k, stand[1] + (aim[1] - stand[1]) * k]; }
+  let lookH = aim ? 0.7 : 0.9;
+  const view = RD(r) && RD(r).view;               // the room's photo was made from a snapshot taken here
+  if (view) { stand = [view.p[0], view.p[1]]; far = [view.l[0], view.l[1]]; lookH = view.l[2]; }
+  SHOTS.push({ room: r.name, p: [stand[0], stand[1], EYE], l: [far[0], far[1], lookH] });
   const drift = [stand[0] + (far[0] - stand[0]) * 0.04, stand[1] + (far[1] - stand[1]) * 0.04];
   if (i > 0) {
     // calm: the same speed for the same distance, one movement at a time (rise, glide, settle), no quick turns
@@ -461,7 +466,7 @@ ROOMS.forEach((r, i) => {
   } else {
     tlReveal.push([0, stand[0], stand[1], -1, Math.hypot(w, d) + 1, 5.3, 1.1]);
   }
-  holdAt(T, T + 0.8, V(stand[0], stand[1]), V(drift[0], drift[1]), V(far[0], far[1], aim ? 0.7 : 0.9), V(far[0], far[1], aim ? 0.7 : 0.9), { kind: 'room', room: r, n: i });
+  holdAt(T, T + 0.8, V(stand[0], stand[1]), V(drift[0], drift[1]), V(far[0], far[1], lookH), V(far[0], far[1], lookH), { kind: 'room', room: r, n: i });
   const rdp = RD(r);
   if (rdp && rdp.photo && D.photo_walk !== false) VEILS.push([T, T + 0.8, rdp.photo]);
   const reach = farFromDoor(r) + 0.5;
@@ -480,6 +485,49 @@ holdAt(tA + 1.8, tA + 2.6, AER, AER, AERL, AERL, { kind: 'end' }, { fov: 40, k: 
 tlReveal.push([MAXR, ent.x + OUT.x * 0.3, ent.y + OUT.y * 0.3, outR, 8 * S + 30, lift, 1.6]);
 KF.sort((a, b) => a.t - b.t);
 const END = tA + 2.6;
+if (SNAP) { snapRooms(); return; }
+
+// ---------- the white model (Faiek, 2026-11-24): every room photographed in plain white from its stop in the tour,
+// then sent to the app, which has Nano Banana design each room from its snapshot ----------
+function snapRooms() {
+  const clay = new THREE.MeshStandardMaterial({ color: '#f3f1ed', roughness: 0.9 });
+  const clayFloor = new THREE.MeshStandardMaterial({ color: '#dedad3', roughness: 0.95 });
+  const clayCeil = new THREE.MeshStandardMaterial({ color: '#f3f1ed', roughness: 1, emissive: '#d9d5ce', emissiveIntensity: 0.55 });   // a ceiling lit only from below reads as brown
+  const outside = new Set([ground, sky, plan, ...garden]);
+  scene.traverse(n => {
+    if (!n.isMesh) return;
+    for (let a = n; a; a = a.parent) if (outside.has(a)) return;
+    const white = Math.abs(n.rotation.x + Math.PI / 2) < 1e-6 ? clayFloor : Math.abs(n.rotation.x - Math.PI / 2) < 1e-6 ? clayCeil : clay;
+    const paint = m => (m.transparent ? m : white);                // glass stays glass
+    n.material = Array.isArray(n.material) ? n.material.map(paint) : paint(n.material);
+  });
+  U.uZone.value.forEach(z => z.set(0, 0, 1e4, 0));   // the garden fully real, no pencil anywhere
+  U.uSky.value = 1; scene.fog.color.copy(FOG_REAL);
+  walls.forEach(w => { w.scale.y = 1; w.visible = true; });
+  furn.forEach(f => { f.scale.y = 1; f.visible = true; });
+  ceilings.forEach(c => { if (c.isLight) c.intensity = c.userData.full; else c.visible = true; });
+  plan.visible = false;
+  renderer.setPixelRatio(1);
+  renderer.setSize(1024, 768, false);
+  camera.aspect = 4 / 3; camera.fov = 60; camera.clearViewOffset(); camera.updateProjectionMatrix();
+  const shots = [];
+  for (const s of SHOTS) {
+    camera.position.copy(V(...s.p)); camera.lookAt(V(...s.l));
+    renderer.render(scene, camera);
+    shots.push({ room: s.room, view: { p: s.p, l: s.l, fov: 60 }, image: canvas.toDataURL('image/jpeg', 0.9) });
+  }
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;inset:0;z-index:30;overflow:auto;background:#f4f1ea;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;align-content:start;font:13px -apple-system,Segoe UI,sans-serif;color:#1d1b19';
+  for (const s of shots) {
+    const f = document.createElement('figure'); f.style.margin = '0';
+    const img = document.createElement('img'); img.src = s.image; img.alt = s.room; img.style.cssText = 'width:100%;border-radius:8px;display:block';
+    const c = document.createElement('figcaption'); c.textContent = s.room; c.style.marginTop = '4px';
+    f.append(img, c); box.append(f);
+  }
+  document.body.append(box);
+  document.body.classList.add('ready');
+  window.parent.postMessage({ designedLiving: 'snaps', shots }, '*');
+}
 
 const FIELDS = ['p', 'l'], SCAL = ['fov', 'k', 'sx'];
 KF.forEach((f, i) => {

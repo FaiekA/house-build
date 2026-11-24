@@ -875,6 +875,34 @@ def photo_prompt(room, style_words, palette, wall_height, extra=""):
             f"no watermark, no border.")
 
 
+# The white model (Faiek, 2026-11-24): each room's photo is made from a snapshot of the plain white 3D room, taken where
+# the walkthrough stops in it. The walls, windows, doors, ceiling and camera stay; the furniture may change.
+def snapshot_prompt(room, style_words, palette, wall_height, extra=""):
+    w, d = room["x"][1] - room["x"][0], room["y"][1] - room["y"][0]
+    named = "; ".join(f"{p['name']} ({p['hex']}) for {p['use']}" for p in palette)
+    note = f" About this room: {room['note']}." if room.get("note") else ""
+    wish = f" The owner asks for: {extra.strip()[:300]}." if extra and extra.strip() else ""
+    name = room["name"].lower()
+    if GARAGE_RE.search(name):
+        dress = ("It is a garage: a sealed grey concrete floor, one modern car parked inside, tidy wall storage, a "
+                 "bicycle, bright practical ceiling lights. No sofa, rug, bed or living-room furniture.")
+    elif PASSAGE_RE.search(name):
+        dress = "It is a hallway: art on the walls, a runner rug, a slim console only if it fits, soft wall lights."
+    else:
+        dress = ("Real furniture that fits the room, with space to walk round it. Light in layers: soft ambient light, "
+                 "task light where you work or eat, one accent lamp. Styled like people live there: art, books, "
+                 "cushions, a rug, plants. Nothing random.")
+    return (f"This picture is a plain white 3D model of the {name} in a house: every surface is white on purpose, and "
+            f"the simple white shapes only show where furniture could go. Turn it into a professional interior "
+            f"designer's photograph of this room in a {style_words} style. The room is {w:.1f} by {d:.1f} metres with "
+            f"{wall_height:.1f} metre ceilings.{note}{wish} Keep exactly as they are: the walls, every window and "
+            f"door (the same places and sizes), the ceiling height, and the same camera position, lens and angle. "
+            f"You may change the furniture's design, add or move furniture, and add plants, art, rugs, curtains and "
+            f"styling. {dress} Give the walls colour and the floor a real finish; nothing should look like a white "
+            f"model any more. Use only this house palette of materials: {named}. Natural daylight through the "
+            f"windows, photorealistic, no people, no text, no watermark, no border.")
+
+
 def _post(url, payload, key, timeout, opener=None):
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST",
                                  headers={"x-goog-api-key": key, "Content-Type": "application/json",

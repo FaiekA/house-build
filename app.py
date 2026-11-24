@@ -327,6 +327,8 @@ def design_start(hid, names=None, pro=False, cfg=None, make=None, read=None, roo
                      "model": "pro" if pro else "flash"}
     design = houseplan.design_of(state)
     feature = "photos" if photos else "design"
+    wall = float(state.get("wall_height") or houseplan.DEFAULT_WALL)
+    snaps = {} if photos else {r["name"]: (houseplan.snap_of(path, state, r["name"]) or (None,))[0] for r in rooms}
 
     def record(model, use):
         usage.record_gemini(feature, model, use)
@@ -345,10 +347,12 @@ def design_start(hid, names=None, pro=False, cfg=None, make=None, read=None, roo
                         before, mime = photorooms.source(root, hid, room["name"])
                         prompt = housedesign.restyle_prompt(room["name"], words, palette, design.get("wish") or "")
                         data, ext = (restyle or housedesign.restyle_photo)(before, mime, prompt, key, model, record)
+                    elif snaps.get(room["name"]):          # the white model's snapshot of this room
+                        prompt = housedesign.snapshot_prompt(room, words, palette, wall, design.get("wish") or "")
+                        data, ext = (restyle or housedesign.restyle_photo)(snaps[room["name"]], "image/jpeg", prompt,
+                                                                           key, model, record)
                     else:
-                        prompt = housedesign.photo_prompt(room, words, palette,
-                                                          float(state.get("wall_height") or houseplan.DEFAULT_WALL),
-                                                          design.get("wish") or "")
+                        prompt = housedesign.photo_prompt(room, words, palette, wall, design.get("wish") or "")
                         data, ext = (make or housedesign.make_photo)(prompt, key, model, record)
                     try:
                         seen = (read or housedesign.read_photo)(data, ext, key, cfg.get("house_read_model") or None,
@@ -472,7 +476,7 @@ def api_get(route, query):
     if route == "/api/costs":
         return 200, usage.summary()
     if route == "/api/preview":
-        html = houseplan.preview(root, hid)
+        html = houseplan.preview(root, hid, (query.get("snap") or [""])[0] == "1")
         houseplan.no_secrets(html, secrets(cfg))
         return 200, html
     return 404, {"error": "Not found."}
@@ -536,6 +540,16 @@ def api_post(route, body):
         return 200, design_start(hid, names, bool(body.get("pro")), cfg, root=root)
     if action == "cutouts":
         return 200, cuts_start(hid, cfg, root)
+    if action == "snapshot":                   # one room's white-model snapshot, sent on by the editor page
+        image = str(body.get("image") or "")
+        head, _, b64 = image.partition(",")
+        if head != "data:image/jpeg;base64" or not b64:
+            return 400, {"error": "Send the snapshot as a JPEG."}
+        try:
+            data = base64.b64decode(b64, validate=True)
+        except ValueError:
+            return 400, {"error": "Send the snapshot as a JPEG."}
+        return 200, houseplan.store_snap(root, hid, str(body.get("room") or ""), data, body.get("view"))
     if action == "furnish":
         houseplan.furnish_house(root, hid)
         return 200, house_view(root, hid)
@@ -668,8 +682,11 @@ class Handler(SimpleHTTPRequestHandler):
             hid, room = (query.get("id") or [""])[0], (query.get("room") or [""])[0]
             try:
                 root = data_root()
-                if (query.get("which") or [""])[0] == "before":
+                which = (query.get("which") or [""])[0]
+                if which == "before":
                     data, ctype = photorooms.source(root, hid, room)
+                elif which == "snap":
+                    data, ctype = houseplan.snap_photo(root, hid, room)
                 else:
                     data, ctype = houseplan.photo(root, hid, room)
             except houseplan.HouseError as exc:
@@ -779,6 +796,29 @@ def selftest():
             problems.append(f"the gallery of designed rooms: {houseplan.gallery(tmp)}")
         else:
             said.append("a plan house designed with stand-ins: a photo, palette, furniture and cut-outs per room")
+        # the white model: snapshots taken, each room designed from its own, stale once the house changes shape
+        jpg = b"\xff\xd8\xff\xe0" + b"white model" * 20
+        snap = houseplan.house_data(tmp, hid, snap=True)
+        houseplan.store_snap(tmp, hid, "Living room", jpg, {"p": [1, 1, 1.6], "l": [4, 5, 0.7], "fov": 60})
+        sent = []
+        design_start(hid, ["Living room"], False, {}, make, read, tmp, cut=cut,
+                     restyle=lambda pic, mime, prompt, key, model, record: (sent.append((pic, prompt)) or (png, "png")))
+        work = wait(hid)
+        path = houseplan.house_dir(tmp, hid)
+        walk = houseplan.house_data(tmp, hid)["design"]["rooms"]
+        if not snap.get("snap") or snap.get("cutouts") is not False or any(
+                "photo" in r for r in snap["design"]["rooms"].values()):
+            problems.append("the white model page still carries the photos")
+        elif work.get("errors") or len(sent) != 1 or sent[0][0] != jpg or "white 3D model" not in sent[0][1]:
+            problems.append(f"the room wasn't designed from its snapshot: {work}, {len(sent)}")
+        elif walk["Living room"].get("view", {}).get("p") != [1.0, 1.0, 1.6] or "view" in walk["Kitchen"]:
+            problems.append(f"the tour doesn't stop where the snapshot was taken: {walk['Living room'].get('view')}")
+        else:
+            houseplan.save(tmp, hid, {"wall_height": 3.0})
+            if houseplan.snap_of(path, houseplan.read_state(path), "Living room") is not None:
+                problems.append("a snapshot of the old house shape was still used")
+            else:
+                said.append("the white model: a room designed from its snapshot, retaken when the house changes")
         # a photos house redesigned with a stand-in for Nano Banana
         hid = houseplan.create(tmp, "Selftest photos")
         path = houseplan.house_dir(tmp, hid)

@@ -695,6 +695,85 @@ def cuts_of(path, room_name):
     return cuts if isinstance(cuts, list) else None
 
 
+# ---- the white model (Faiek, 2026-11-24): the walkthrough drawn in plain white, one snapshot per room from where the
+# tour stops in it. Nano Banana then designs each room from its snapshot, so the photo keeps the 3D room's walls,
+# windows, doors and camera angle (the furniture, plants and styling may change). A snapshot is only used while the
+# house's shape is the one it was taken of: change a room, the plan or the model and it is taken again.
+SNAP_DIR = "snaps"
+MAX_SNAP_BYTES = 3 * 1024 * 1024
+
+
+def snap_path(path, room_name):
+    return Path(path) / SNAP_DIR / f"{folder_name(room_name) or 'room'}.jpg"
+
+
+def shape_key(path, state):
+    """A fingerprint of the house's shape: its rooms, wall height, front door and model files (not the furniture)."""
+    import hashlib
+    files = sorted((f.name, f.stat().st_size, int(f.stat().st_mtime)) for f in model_files(path))
+    shape = [state.get("rooms"), state.get("size"), state.get("wall_height"), state.get("entrance"),
+             state.get("unit"), files]
+    return hashlib.sha1(json.dumps(shape, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+
+
+def clean_view(view, size):
+    """Where a snapshot was taken from, in plan metres: {p: [x, y, height], l: [x, y, height], fov}, or None."""
+    try:
+        p, l = [float(v) for v in view["p"]], [float(v) for v in view["l"]]
+        fov = float(view.get("fov") or 60)
+        w, d = float(size[0]), float(size[1])
+    except (TypeError, KeyError, ValueError, AttributeError, IndexError):
+        return None
+    if len(p) != 3 or len(l) != 3 or not all(math.isfinite(v) for v in p + l + [fov]):
+        return None
+    ok = lambda q: -2 <= q[0] <= w + 2 and -2 <= q[1] <= d + 2 and 0 <= q[2] <= 6
+    if not (ok(p) and ok(l)) or not 20 <= fov <= 100:
+        return None
+    return {"p": [round(v, 3) for v in p], "l": [round(v, 3) for v in l], "fov": round(fov, 1)}
+
+
+def store_snap(files_root, house_id, room_name, data, view=None):
+    """A room's white-model snapshot (a JPEG from the walkthrough) and where it was taken from."""
+    path = house_dir(files_root, house_id)
+    state = read_state(path)
+    if room_name not in {r.get("name") for r in state.get("rooms") or []}:
+        raise HouseError("There's no room with that name in this house.", 404)
+    if housedesign.kind_of(data) != "jpg" or len(data) > MAX_SNAP_BYTES:
+        raise HouseError("That snapshot didn't come through as a picture. Take the snapshots again.")
+    target = snap_path(path, room_name)
+    target.parent.mkdir(exist_ok=True)
+    write_atomic(target, data)
+    rd = design_of(state)["rooms"].setdefault(room_name, {})
+    rd.update({"snap": target.name, "snap_key": shape_key(path, state), "snapped": time.strftime("%Y-%m-%d %H:%M")})
+    v = clean_view(view, state.get("size") or (0, 0))
+    if v:
+        rd["view"] = v
+    else:
+        rd.pop("view", None)
+    save_state(path, state)
+    return {"room": room_name, "snapped": rd["snapped"]}
+
+
+def snap_fresh(path, state, room_name, key=None):
+    """True when the room has a snapshot taken of the house as it is now."""
+    rd = (design_of(dict(state))["rooms"].get(room_name) or {})
+    return bool(rd.get("snap") and rd.get("snap_key") == (key or shape_key(path, state))
+                and snap_path(path, room_name).is_file())
+
+
+def snap_of(path, state, room_name):
+    """(bytes, "image/jpeg") of the room's snapshot of the house as it is now, else None."""
+    return (snap_path(path, room_name).read_bytes(), "image/jpeg") if snap_fresh(path, state, room_name) else None
+
+
+def snap_photo(files_root, house_id, room_name):
+    path = house_dir(files_root, house_id)
+    got = snap_of(path, read_state(path), room_name)
+    if not got:
+        raise HouseError("That room has no white model snapshot yet.", 404)
+    return got
+
+
 def furnish_house(files_root, house_id):
     """Place every room's furniture (from its photo, else its kit) and run the layout checks. No model call."""
     path = house_dir(files_root, house_id)
@@ -733,6 +812,7 @@ def design_view(path, state):
     """The designer's state for the page (photos by name; the page loads them from /houseplan/photo)."""
     d = design_of(dict(state))
     names = [r["name"] for r in state.get("rooms") or []]
+    key = shape_key(path, state)
     rooms = {}
     for name in names:
         rd = d["rooms"].get(name) or {}
@@ -742,7 +822,8 @@ def design_view(path, state):
                        "style": rd.get("style") or "", "style_palette": room_style(d, name)[1] if rd.get("style") else [],
                        "items": len(rd.get("items") or []), "checks": rd.get("checks") or [],
                        "cuts": len(cuts_of(path, name) or []) if rd.get("photo") else 0,
-                       "cut": cuts_of(path, name) is not None}
+                       "cut": cuts_of(path, name) is not None,
+                       "snap": snap_fresh(path, state, name, key), "snapped": rd.get("snapped") or ""}
     return {"style": d["style"], "wish": d["wish"], "palette": d["palette"], "furnish": furnishing(state),
             "furnish_set": d["furnish"] is not None, "recolour": d["recolour"], "rooms": rooms,
             "cost": {"flash": housedesign.COST_FLASH_C, "pro": housedesign.COST_PRO_C}}
@@ -764,6 +845,7 @@ def design_data(path, state, rooms):
     if not isinstance(d, dict) or not d.get("rooms"):
         return None
     d = design_of(state)
+    key = shape_key(path, state)
     out = {"palette": d["palette"], "walls": housedesign.pick(d["palette"], "walls", "#f1ede5"),
            "furnish": furnishing(state), "recolour": bool(d["recolour"]), "rooms": {}}
     for room in rooms:
@@ -773,6 +855,8 @@ def design_data(path, state, rooms):
         entry = {"palette": (rd.get("read") or {}).get("palette") or room_style(d, room["name"])[1][:5],
                  "floor": rd.get("floor"),
                  "walls": rd.get("walls"), "items": rd.get("items") or []}
+        if rd.get("view") and snap_fresh(path, state, room["name"], key):
+            entry["view"] = rd["view"]                  # the tour stops where the room's snapshot was taken
         target = Path(path) / DESIGN_DIR / str(rd.get("photo") or "")
         if rd.get("photo") and target.is_file():
             entry["photo"] = (f"data:{PICTURE_TYPES.get(target.suffix.lower(), 'image/png')};base64,"
@@ -787,10 +871,15 @@ def export_path(path, state):
     return Path(path) / f"{folder_name(state.get('title') or Path(path).name)} walkthrough.html"
 
 
-def house_data(files_root, house_id):
-    """The JSON the walkthrough engine reads."""
+def house_data(files_root, house_id, snap=False):
+    """The JSON the walkthrough engine reads. snap: the white model, for the snapshots (furniture placed, no photos)."""
     path = house_dir(files_root, house_id)
     state = read_state(path)
+    if snap and state.get("size") and furnishing(state) and not all(
+            (design_of(dict(state))["rooms"].get(r["name"]) or {}).get("items")
+            for r in clean_rooms(state.get("rooms"), state["size"])):
+        furnish_house(files_root, house_id)           # free: the rooms' usual kit, so the snapshots have furniture
+        state = read_state(path)
     if not state.get("size"):
         raise HouseError("Drop the model in first.")
     rooms = clean_rooms(state.get("rooms"), state["size"])
@@ -816,6 +905,11 @@ def house_data(files_root, house_id):
     design = design_data(path, state, rooms)
     if design:
         data["design"] = design
+    if snap:
+        data.update({"snap": True, "cutouts": False, "photo_walk": False})
+        for entry in (design or {}).get("rooms", {}).values():
+            for k in ("photo", "cuts", "view"):
+                entry.pop(k, None)
     return data
 
 
@@ -849,9 +943,9 @@ def export(files_root, house_id, secrets=()):
     return {"file": target.name, "path": str(target), "mb": round(len(data) / 1024 / 1024, 1)}
 
 
-def preview(files_root, house_id):
-    """The page as it would be exported, without saving it."""
-    return page_html(house_data(files_root, house_id))
+def preview(files_root, house_id, snap=False):
+    """The page as it would be exported, without saving it (snap: the white model that takes the snapshots)."""
+    return page_html(house_data(files_root, house_id, snap))
 
 
 # ---------------------------------------------------------------- the mood board PDF (Faiek, 2026-11-24)
