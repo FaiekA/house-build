@@ -646,6 +646,27 @@ def store_photo(files_root, house_id, room_name, data, ext, read, model):
     return furnish_house(files_root, house_id)
 
 
+def cuts_path(path, room_name):
+    return Path(path) / DESIGN_DIR / f"{folder_name(room_name) or 'room'}.cuts.json"
+
+
+def store_cuts(files_root, house_id, room_name, cuts):
+    """The furniture cut out of a room's photo (housedesign.cut_photo), kept beside the photo. A new photo for the
+    room removes them with it (store_photo clears the room's files)."""
+    path = house_dir(files_root, house_id)
+    target = cuts_path(path, room_name)
+    target.parent.mkdir(exist_ok=True)
+    write_atomic(target, json.dumps({"cuts": cuts}).encode("utf-8"))
+
+
+def cuts_of(path, room_name):
+    try:
+        cuts = json.loads(cuts_path(path, room_name).read_text(encoding="utf-8")).get("cuts")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return cuts if isinstance(cuts, list) else None
+
+
 def furnish_house(files_root, house_id):
     """Place every room's furniture (from its photo, else its kit) and run the layout checks. No model call."""
     path = house_dir(files_root, house_id)
@@ -691,7 +712,9 @@ def design_view(path, state):
                        "model": rd.get("model") or "", "made": rd.get("made") or "",
                        "palette": (rd.get("read") or {}).get("palette") or [],
                        "style": rd.get("style") or "", "style_palette": room_style(d, name)[1] if rd.get("style") else [],
-                       "items": len(rd.get("items") or []), "checks": rd.get("checks") or []}
+                       "items": len(rd.get("items") or []), "checks": rd.get("checks") or [],
+                       "cuts": len(cuts_of(path, name) or []) if rd.get("photo") else 0,
+                       "cut": cuts_of(path, name) is not None}
     return {"style": d["style"], "wish": d["wish"], "palette": d["palette"], "furnish": furnishing(state),
             "furnish_set": d["furnish"] is not None, "recolour": d["recolour"], "rooms": rooms,
             "cost": {"flash": housedesign.COST_FLASH_C, "pro": housedesign.COST_PRO_C}}
@@ -726,6 +749,7 @@ def design_data(path, state, rooms):
         if rd.get("photo") and target.is_file():
             entry["photo"] = (f"data:{PICTURE_TYPES.get(target.suffix.lower(), 'image/png')};base64,"
                               + base64.b64encode(target.read_bytes()).decode("ascii"))
+            entry["cuts"] = cuts_of(path, room["name"]) or []
         out["rooms"][room["name"]] = entry
     return out
 

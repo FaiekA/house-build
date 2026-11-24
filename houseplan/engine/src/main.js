@@ -11,6 +11,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import Lenis from 'lenis';
 import { TEX, HDRI } from './ph.js';
 import { makeItem } from './furniture.js';
+import { makeCuts, cutItem, faceCamera } from './cutouts.js';
 
 gsap.registerPlugin(ScrollTrigger);
 const MAXR = 16;                         // rooms the reveal shader knows (more are shown, but wake up with the outdoors)
@@ -28,7 +29,8 @@ async function loadAssets() {
   const env = await new EXRLoader().loadAsync(HDRI);
   let model = null;
   if (HOUSE.model && HOUSE.model.obj) model = await loadModel(HOUSE.model);
-  return { PT, env, model };
+  const cuts = HOUSE.cutouts === false ? {} : await makeCuts(HOUSE.design);
+  return { PT, env, model, cuts };
 }
 
 // The OBJ arrives already in plan metres: vertex = (x, height, -y). Textures named in the MTL come from model.files.
@@ -57,7 +59,7 @@ async function loadModel(m) {
   return obj;
 }
 
-function run(D, { PT, env: ENV, model }) {
+function run(D, { PT, env: ENV, model, cuts: CUTS }) {
 const SW = D.size[0], SD = D.size[1], S = Math.max(SW, SD), CX = SW / 2, CY = SD / 2;
 const W = (x, y, h = 0) => new THREE.Vector3(x - CX, h, CY - y);
 const EYE = 1.6;
@@ -281,14 +283,19 @@ ROOMS.forEach((r, i) => {
 });
 
 // ---------- furniture from the designer (the plan's items: one source of truth) ----------
-const furn = [];
+const furn = [], faces = [];     // faces: the photo cut-outs, turned towards you every frame
+const LIT = { floor_lamp: 1.1 };
 if (DES && DES.furnish) {
   let lamps = 0;
   ROOMS.forEach((r, i) => {
     const rd = RD(r); if (!rd || !rd.items) return;
     const pal = { ...PAL }; (rd.palette || []).forEach(p => { pal[p.use] = pal[p.use] || p.hex; });
+    const mine = (CUTS[r.name] || []).slice();          // this room's photo cut-outs, used once each
     for (const it of rd.items) {
-      const { group, light } = makeItem(it, H, pal);
+      const k = mine.findIndex(c => c.kind === it.kind);    // six chairs and four cut out: the chairs repeat
+      const cut = k >= 0 ? mine.splice(k, 1)[0] : (CUTS[r.name] || []).find(c => c.kind === it.kind) || null;
+      const { group, light } = cut ? { group: cutItem(it, cut), light: LIT[it.kind] ? { y: it.h - 0.2, full: LIT[it.kind] } : null } : makeItem(it, H, pal);
+      if (cut) faces.push(group);
       group.position.copy(W(it.x, it.y)); group.scale.y = 0.001; scene.add(group); furn.push(group);
       if (light && lamps < 6) {           // layered light: a few warm lamps, lit when you are in their room
         const pl = new THREE.PointLight('#ffd49a', 0, 3.2, 1.8); pl.position.copy(W(it.x, it.y, light.y));
@@ -662,6 +669,7 @@ renderer.setAnimationLoop(() => {
   const ceilOn = state.ceil > 0.5;
   ceilings.forEach(c => { if (c.isLight) c.intensity = ceilOn ? c.userData.full * THREE.MathUtils.clamp(U.uZone.value[c.userData.room].z / 3, 0, 1) : 0; else c.visible = ceilOn; });
   walls.forEach(wl => { wl.visible = wl.scale.y > 0.002; });
+  for (const f of faces) faceCamera(f, camera);
   plan.visible = U.uZone.value[MAXR].z < 6 * S || U.uWipe.value > -500;
   setActive(stepFor(clock.t));
   setCard(cardFor(clock.t));

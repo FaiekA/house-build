@@ -53,6 +53,7 @@ FIELDS = [
     ("house_pro_model", "\"Make it better\" (Nano Banana Pro)", "text"),
     ("house_plan_model", "Gemini model for reading plans", "text"),
     ("house_read_model", "Gemini model that reads the photos back", "text"),
+    ("house_cutout_model", "Gemini model that cuts the furniture out of the photos", "text"),
     ("data_folder", "Where houses are kept", "text"),
     ("brand", "Your name or business (top left of every website)", "text"),
 ]
@@ -117,7 +118,8 @@ def settings_view(cfg=None):
             out[key] = {"label": label, "kind": kind, "value": value}
     defaults = {"claude_model": DEFAULT_CLAUDE, "image_model": "newest Nano Banana Flash Google lists",
                 "house_pro_model": "newest Nano Banana Pro Google lists", "house_plan_model": housedesign.LOCATE_MODEL,
-                "house_read_model": housedesign.READ_MODEL, "data_folder": str(APP)}
+                "house_read_model": housedesign.READ_MODEL,
+                "house_cutout_model": housedesign.CUT_MODEL, "data_folder": str(APP)}
     return {"fields": out, "defaults": defaults, "houses_folder": str(houseplan.root(data_root(cfg)))}
 
 
@@ -300,7 +302,7 @@ def work_of(hid):
         return {**work, "errors": list(work["errors"])} if work else None
 
 
-def design_start(hid, names=None, pro=False, cfg=None, make=None, read=None, root=None, restyle=None):
+def design_start(hid, names=None, pro=False, cfg=None, make=None, read=None, root=None, restyle=None, cut=None):
     """Design the named rooms (all of them by default). From a plan or model: a new photo per room, then furniture.
     From photos: your photo of each room redesigned. make/read/restyle stand in for Gemini in the self-test."""
     cfg = cfg if cfg is not None else load_config()
@@ -359,6 +361,7 @@ def design_start(hid, names=None, pro=False, cfg=None, make=None, read=None, roo
                         photorooms.store(root, hid, room["name"], data, ext, seen, "pro" if pro else "flash")
                     else:
                         houseplan.store_photo(root, hid, room["name"], data, ext, seen, "pro" if pro else "flash")
+                        cut_room(root, hid, room["name"], data, ext, key, cfg, record, cut)
                 except (housedesign.DesignError, houseplan.HouseError) as exc:
                     with WORK_LOCK:
                         WORK[hid]["errors"].append(f"{room['name']}: {exc.message}")
@@ -376,6 +379,67 @@ def design_start(hid, names=None, pro=False, cfg=None, make=None, read=None, roo
 
     threading.Thread(target=run, name=f"design-{hid}", daemon=True).start()
     return {"started": True, "rooms": [r["name"] for r in rooms]}
+
+
+def cut_room(root, hid, name, data, ext, key, cfg, record, cut=None):
+    """The furniture cut out of a room's photo, for the walkthrough. Best effort: without it the pieces are drawn."""
+    try:
+        cuts = (cut or housedesign.cut_photo)(data, ext, key, cfg.get("house_cutout_model") or None, record)
+    except housedesign.DesignError as exc:
+        print(f"couldn't cut the furniture out of the {name} photo ({exc.message})", file=sys.stderr, flush=True)
+        return False
+    houseplan.store_cuts(root, hid, name, cuts)
+    return True
+
+
+def cuts_start(hid, cfg=None, root=None, cut=None):
+    """Cut the furniture out of every designed photo that has no cut-outs yet (photos made before cut-outs were)."""
+    cfg = cfg if cfg is not None else load_config()
+    key = gemini_key(cfg)
+    root = root or data_root(cfg)
+    path = houseplan.house_dir(root, hid)
+    state = houseplan.read_state(path)
+    d = houseplan.design_of(state)
+    rooms = [r["name"] for r in state.get("rooms") or []
+             if (d["rooms"].get(r["name"]) or {}).get("photo") and houseplan.cuts_of(path, r["name"]) is None]
+    if not rooms:
+        raise houseplan.HouseError("Every designed room already has its cut-outs.")
+    if not key and not cut:
+        raise houseplan.HouseError("Cutting out the furniture needs your Gemini key (Settings).", 503)
+    with WORK_LOCK:
+        if (WORK.get(hid) or {}).get("running"):
+            raise houseplan.HouseError("This house is already being designed.", 409)
+        WORK[hid] = {"running": True, "done": 0, "total": len(rooms), "room": rooms[0], "errors": [], "model": "cut"}
+
+    def record(model, use):
+        usage.record_gemini("design", model, use)
+
+    def run():
+        try:
+            for name in rooms:
+                with WORK_LOCK:
+                    WORK[hid]["room"] = name
+                try:
+                    data, ctype = houseplan.photo(root, hid, name)
+                    ext = {"image/jpeg": "jpg", "image/webp": "webp"}.get(ctype, "png")
+                    if not cut_room(root, hid, name, data, ext, key, cfg, record, cut):
+                        with WORK_LOCK:
+                            WORK[hid]["errors"].append(f"{name}: Gemini couldn't cut the furniture out.")
+                except houseplan.HouseError as exc:
+                    with WORK_LOCK:
+                        WORK[hid]["errors"].append(f"{name}: {exc.message}")
+                with WORK_LOCK:
+                    WORK[hid]["done"] += 1
+        except Exception as exc:             # the thread must always say it stopped
+            print(f"the cut-out run crashed: {exc!r}", file=sys.stderr, flush=True)
+            with WORK_LOCK:
+                WORK[hid]["errors"].append("Something went wrong; the app's window says what.")
+        finally:
+            with WORK_LOCK:
+                WORK[hid]["running"] = False
+
+    threading.Thread(target=run, name=f"cuts-{hid}", daemon=True).start()
+    return {"started": True, "rooms": rooms}
 
 
 # ---------------------------------------------------------------- the API
@@ -468,6 +532,8 @@ def api_post(route, body):
         rooms = body.get("rooms")
         names = [str(n) for n in rooms][:houseplan.MAX_ROOMS] if isinstance(rooms, list) else None
         return 200, design_start(hid, names, bool(body.get("pro")), cfg, root=root)
+    if action == "cutouts":
+        return 200, cuts_start(hid, cfg, root)
     if action == "furnish":
         houseplan.furnish_house(root, hid)
         return 200, house_view(root, hid)
@@ -692,7 +758,11 @@ def selftest():
                 "openings": [{"wall": "s", "from": 4, "to": 4.9, "kind": "door", "name": "front door"}],
                 "rooms": [{"name": "Living room", "x": [0, 5], "y": [0, 6]}, {"name": "Kitchen", "x": [5, 9], "y": [0, 6]}]}
         houseplan.save_plan(tmp, hid, housedesign.parse_plan(json.dumps(plan)))
-        design_start(hid, None, False, {}, make, read, tmp)
+        cut = lambda data, ext, key, model, record: housedesign.clean_cuts(json.dumps(
+            [{"box_2d": [400, 100, 800, 600], "label": "sofa", "mask": "data:image/png;base64,"
+              + base64.b64encode(png).decode()}, {"box_2d": [1, 2, 3, 4], "label": "sofa"},
+             {"box_2d": [100, 100, 300, 300], "label": "spaceship"}]))
+        design_start(hid, None, False, {}, make, read, tmp, cut=cut)
         work = wait(hid)
         design = houseplan.view(tmp, hid)["design"]["rooms"]
         if work.get("running") or work.get("errors") or len(asked) != 2:
@@ -701,8 +771,10 @@ def selftest():
             problems.append(f"a room has no photo or furniture: {design}")
         elif "#777777" not in json.dumps(houseplan.house_data(tmp, hid)["design"]):
             problems.append("the colours read from the photo didn't reach the walkthrough")
+        elif [c["kind"] for c in houseplan.house_data(tmp, hid)["design"]["rooms"]["Living room"]["cuts"]] != ["sofa"]:
+            problems.append("the furniture cut out of the photo didn't reach the walkthrough")
         else:
-            said.append("a plan house designed with stand-ins: a photo, palette and furniture per room")
+            said.append("a plan house designed with stand-ins: a photo, palette, furniture and cut-outs per room")
         # a photos house redesigned with a stand-in for Nano Banana
         hid = houseplan.create(tmp, "Selftest photos")
         path = houseplan.house_dir(tmp, hid)

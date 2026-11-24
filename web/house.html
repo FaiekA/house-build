@@ -236,10 +236,15 @@ function renderDesign(sd) {
   all.disabled = again.disabled = !!(work && work.running);
   all.onclick = () => design(null, false);
   again.onclick = async () => { try { view = { ...view, ...(await call('/api/house', { action: 'furnish', id: current })) }; renderDesign(sd); alertLine('Furniture placed and checked again.', true); } catch (err) { alertLine(err.message); } };
-  if (work && work.running) state.textContent = `Designing ${work.room} (${work.done + 1} of ${work.total}, ${work.model === 'pro' ? 'Pro' : 'Flash'})…`;
+  // photos made before cut-outs existed: cut the furniture out of them, so the walkthrough shows pictures, not blocks
+  const uncut = photos ? [] : list_.filter(r => ((d.rooms || {})[r.name] || {}).photo && !((d.rooms || {})[r.name] || {}).cut);
+  const cutBtn = el('button', { type: 'button', title: 'One cheap Gemini call per room: the furniture in the walkthrough becomes the pieces from its photo' }, `Use the photos' furniture in 3D (${uncut.length} room${uncut.length === 1 ? '' : 's'})`);
+  cutBtn.hidden = !uncut.length; cutBtn.disabled = !!(work && work.running);
+  cutBtn.onclick = async () => { await flush(); try { await call('/api/house', { action: 'cutouts', id: current }); alertLine('Cutting the furniture out of the photos…', true); await pollDesign(); } catch (err) { alertLine(err.message); } };
+  if (work && work.running) state.textContent = work.model === 'cut' ? `Cutting out the furniture in ${work.room} (${work.done + 1} of ${work.total})…` : `Designing ${work.room} (${work.done + 1} of ${work.total}, ${work.model === 'pro' ? 'Pro' : 'Flash'})…`;
   else if (work && work.errors && work.errors.length) state.textContent = work.errors.join(' · ');
   if (photos) again.hidden = true;
-  go.append(all, again, state); sd.append(go);
+  go.append(all, again, cutBtn, state); sd.append(go);
   const grid = el('div', { class: 'designs' });
   for (const r of list_) {
     const rd = (d.rooms || {})[r.name] || {};
@@ -258,7 +263,7 @@ function renderDesign(sd) {
     } else if (rd.photo) c.append(el('img', { src: `/api/photo?id=${encodeURIComponent(current)}&room=${encodeURIComponent(r.name)}&t=${encodeURIComponent(rd.made)}`, alt: `${r.name}, as designed` }));
     else c.append(el('div', { class: 'ph' }, 'No photo yet'));
     if (!photos) c.append(el('b', {}, r.name));
-    c.append(el('small', {}, photos ? (rd.photo ? `${rd.model === 'pro' ? 'Nano Banana Pro' : 'Nano Banana Flash'} · ${rd.made}` : 'Your photo') : rd.photo ? `${rd.model === 'pro' ? 'Nano Banana Pro' : 'Nano Banana Flash'} · ${rd.items} pieces of furniture` : `${rd.items || 0} pieces from the room's usual kit`));
+    c.append(el('small', {}, photos ? (rd.photo ? `${rd.model === 'pro' ? 'Nano Banana Pro' : 'Nano Banana Flash'} · ${rd.made}` : 'Your photo') : rd.photo ? `${rd.model === 'pro' ? 'Nano Banana Pro' : 'Nano Banana Flash'} · ${rd.items} pieces of furniture${rd.cuts ? `, ${rd.cuts} shown as photos in 3D` : ''}` : `${rd.items || 0} pieces from the room's usual kit`));
     const rs = el('select', { 'aria-label': `Style for ${r.name}`, title: 'This room\'s own style and palette, before you design it' });
     rs.append(el('option', { value: '' }, `Style: same as the house`));
     for (const [k, n] of Object.entries(view.styles || {})) { if (k === d.style) continue; const o = el('option', { value: k }, n); if (rd.style === k) o.selected = true; rs.append(o); }
