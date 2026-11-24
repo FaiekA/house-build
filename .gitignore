@@ -1,0 +1,8 @@
+config.json
+Houses/
+.usage.json
+*.tmp
+__pycache__/
+houseplan/engine/node_modules/
+houseplan/engine/dist/
+houseplan/engine/package-lock.json

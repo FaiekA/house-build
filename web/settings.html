@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings · Designed Living</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+<style>
+  .wrap { max-width: 980px; }
+  h1 { font-weight: 300; font-size: clamp(34px, 5vw, 48px); margin: 0 0 6px; }
+  .lead { color: var(--ink-dim); margin: 0 0 26px; font-size: 16px; max-width: 680px; }
+  .field { display: grid; grid-template-columns: 240px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); }
+  .field:first-of-type { border-top: 0; }
+  .field label { font-size: 14px; color: var(--ink); }
+  .field label small { display: block; color: var(--ink-faint); font-size: 12px; margin-top: 2px; }
+  .field input { width: 100%; }
+  .field .state { font-size: 13px; color: var(--ink-dim); white-space: nowrap; }
+  .field .state.ok { color: var(--ok); } .field .state.no { color: var(--warn); }
+  .acts { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+  .cost { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin: 6px 0 14px; }
+  .cost div { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .cost b { display: block; font-family: var(--serif); font-size: 26px; font-weight: 400; }
+  .cost span { font-size: 12px; color: var(--ink-faint); letter-spacing: .1em; text-transform: uppercase; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { padding: 7px 4px; border-top: 1px solid var(--line); text-align: left; }
+  th { color: var(--ink-faint); font-weight: 500; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  @media (max-width: 720px) { .field { grid-template-columns: 1fr; gap: 6px; } }
+</style>
+</head>
+<body>
+<header class="bar">
+  <a class="brand" href="index.html">Designed <b>Living</b></a>
+  <div class="right"><a class="btn" href="index.html">My houses</a><a class="btn" href="styles.html">The styles</a></div>
+</header>
+<main class="wrap">
+  <h1>Settings</h1>
+  <p class="lead">These stay on this PC, in <code>config.json</code> beside the app. A key is never shown whole, never sent to a page and never written into a website you export.</p>
+
+  <section class="step">
+    <header><h3><span>01</span>Keys</h3></header>
+    <p class="hint">Gemini makes the room pictures and reads plans. Anthropic (Claude) reads floor plans too; with both, the two readings are combined. Paste a key and press Save; leave a box empty to keep the key you have.</p>
+    <div id="keys"></div>
+    <div class="acts"><button class="go" id="save-keys">Save keys</button><button id="test">Test both keys</button><span id="keys-msg" role="status" class="facts"></span></div>
+  </section>
+
+  <section class="step">
+    <header><h3><span>02</span>Models and your details</h3></header>
+    <p class="hint">Empty means the default shown in grey. Change a model only if you know its exact name.</p>
+    <div id="text"></div>
+    <div class="acts"><button class="go" id="save-text">Save</button><span id="text-msg" role="status" class="facts"></span></div>
+  </section>
+
+  <section class="step">
+    <header><h3><span>03</span>What it has cost</h3></header>
+    <p class="hint">Worked out from list prices for each call this app made. Your bill from Google and Anthropic is the final word.</p>
+    <div class="cost" id="cost"></div>
+    <table id="by"><thead><tr><th>This month, by task</th><th>Service</th><th class="n">Cost</th></tr></thead><tbody></tbody></table>
+  </section>
+  <p class="facts" id="folder"></p>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const el = (tag, attrs = {}, text) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); if (text != null) e.textContent = text; return e; };
+async function call(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({ error: 'Designed Living did not answer. Is its window still open?' }));
+  if (!r.ok) throw new Error(j.error || `Error ${r.status}`);
+  return j;
+}
+const HELP = {
+  gemini_api_key: 'From Google AI Studio (aistudio.google.com, Get API key)',
+  anthropic_api_key: 'From console.anthropic.com, API keys',
+};
+let view = null;
+
+function draw(v) {
+  view = v;
+  const keys = $('keys'), text = $('text'); keys.replaceChildren(); text.replaceChildren();
+  for (const [key, f] of Object.entries(v.fields)) {
+    const row = el('div', { class: 'field' });
+    const lab = el('label', { for: 'f-' + key }, f.label);
+    if (HELP[key]) lab.append(el('small', {}, HELP[key]));
+    const input = el('input', { id: 'f-' + key, 'data-key': key, autocomplete: 'off', spellcheck: 'false' });
+    if (f.kind === 'secret') {
+      input.type = 'password'; input.placeholder = f.set ? 'Paste a new key to replace it' : 'Paste the key';
+      row.append(lab, input, el('span', { class: 'state', id: 's-' + key }, f.shown));
+      keys.append(row);
+    } else {
+      input.value = f.value; input.placeholder = v.defaults[key] || '';
+      row.append(lab, input, el('span'));
+      text.append(row);
+    }
+  }
+  $('folder').textContent = 'Your houses are kept in ' + v.houses_folder;
+}
+
+async function save(box, msg) {
+  const changes = {};
+  for (const input of $(box).querySelectorAll('input')) {
+    const f = view.fields[input.dataset.key];
+    if (f.kind === 'secret') { if (input.value.trim()) changes[input.dataset.key] = input.value.trim(); }
+    else changes[input.dataset.key] = input.value.trim();
+  }
+  $(msg).className = 'facts'; $(msg).textContent = 'Saving…';
+  try { draw(await call('/api/settings', changes)); $(msg).className = 'good'; $(msg).textContent = 'Saved.'; }
+  catch (err) { $(msg).className = 'bad'; $(msg).textContent = err.message; }
+}
+$('save-keys').onclick = () => save('keys', 'keys-msg');
+$('save-text').onclick = () => save('text', 'text-msg');
+$('test').onclick = async () => {
+  $('keys-msg').className = 'facts'; $('keys-msg').textContent = 'Testing…';
+  try {
+    const r = await call('/api/settings/test', {});
+    for (const [svc, key] of [['gemini', 'gemini_api_key'], ['anthropic', 'anthropic_api_key']]) {
+      const s = $('s-' + key); s.textContent = (r[svc].ok ? '✓ ' : '') + r[svc].said; s.className = 'state ' + (r[svc].ok ? 'ok' : 'no');
+    }
+    $('keys-msg').textContent = 'Tested at ' + r.at + '.';
+  } catch (err) { $('keys-msg').className = 'bad'; $('keys-msg').textContent = err.message; }
+};
+
+const money = usd => usd >= 1 ? '$' + usd.toFixed(2) : usd > 0 ? (usd * 100).toFixed(1) + '¢' : '$0';
+async function costs() {
+  const c = await call('/api/costs');
+  const both = p => (c[p].usd || 0) + (c.gemini[p].usd || 0);
+  const box = $('cost'); box.replaceChildren();
+  for (const [p, label] of [['today', 'Today'], ['week', 'Last 7 days'], ['month', 'This month']]) {
+    const d = el('div'); d.append(el('b', {}, money(both(p))), el('span', {}, label)); box.append(d);
+  }
+  const rows = [...c.month.features.map(f => [f.label, 'Claude', f.usd]), ...c.gemini.month.features.map(f => [f.label, 'Gemini', f.usd])]
+    .sort((a, b) => b[2] - a[2]);
+  const tb = $('by').tBodies[0]; tb.replaceChildren();
+  if (!rows.length) { const tr = el('tr'); tr.append(el('td', { colspan: 3, class: 'facts' }, 'Nothing yet this month.')); tb.append(tr); }
+  for (const [label, svc, usd] of rows) { const tr = el('tr'); tr.append(el('td', {}, label), el('td', {}, svc), el('td', { class: 'n' }, money(usd))); tb.append(tr); }
+}
+
+call('/api/settings').then(draw).catch(err => { $('keys-msg').className = 'bad'; $('keys-msg').textContent = err.message; });
+costs().catch(() => { $('cost').textContent = 'Costs could not be read.'; });
+</script>
+</body>
+</html>

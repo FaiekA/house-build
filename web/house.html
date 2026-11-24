@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>House · Designed Living</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="bar">
+  <a class="brand" href="index.html">Designed <b>Living</b></a>
+  <nav id="steps" aria-label="Steps"></nav>
+  <div class="right"><a class="btn" href="index.html">My houses</a><a class="btn" href="settings.html">Settings</a></div>
+</header>
+<main class="wrap" id="main"><p class="facts">Opening the house…</p></main>
+<script>
+// One house (app.py on the server). GET /api/house?id= reads it; POST /api/upload sends one file's bytes; POST
+// /api/house {action} reads the model, saves, designs, exports and opens. Everything the server sends is shown as
+// text, never as HTML. The preview runs sandboxed (it can't reach the app).
+const $ = id => document.getElementById(id);
+const el = (tag, attrs = {}, text) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); if (text != null) e.textContent = text; return e; };
+const SVGNS = 'http://www.w3.org/2000/svg';
+const svg = (tag, attrs = {}) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+let current = null, view = null, rooms = [], picked = -1, doorMode = false, saveTimer = null;
+let tool = 'rooms', sel = null, addKind = 'door';     // the plan's fix tools: rooms | walls | openings; sel = {wall} or {op}
+const KIND_NAMES = { door: 'Door', sliding: 'Sliding door', garage: 'Garage door (rolls up)', opening: 'Opening (no door)', window: 'Window' };
+const KIND_WIDTH = { door: 0.9, sliding: 1.8, garage: 2.5, opening: 1.2, window: 1.2 };
+
+async function call(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({ error: 'Designed Living did not answer. Is its window still open?' }));
+  if (!r.ok) throw new Error(j.error || `Error ${r.status}`);
+  return j;
+}
+
+async function list() {}                       // the houses are listed on the start page (index.html)
+
+function alertLine(msg, ok) { const m = $('msg'); if (m) { m.className = ok ? 'good' : 'bad'; m.textContent = msg; } }
+
+async function open(id) {
+  current = id; picked = -1; doorMode = false; tool = 'rooms'; sel = null;
+  list().catch(() => {});
+  try { view = await call('/api/house?id=' + encodeURIComponent(id)); } catch (err) { $('main').replaceChildren(el('p', { class: 'bad' }, err.message)); return; }
+  rooms = (view.house.rooms || []).map(r => ({ ...r }));
+  render();
+  let to = null; try { to = sessionStorage.getItem('dl-scroll'); sessionStorage.removeItem('dl-scroll'); } catch (e) {}
+  if (to && $(to)) $(to).scrollIntoView({ block: 'start' });
+}
+
+function render() {
+  const h = view.house, main = $('main');
+  main.replaceChildren();
+  document.title = `${h.title} · Designed Living`;
+  steps.show(h);
+  const head = el('div', { class: 'head' }); head.append(el('h2', {}, h.title));
+  head.append(document.createTextNode(h.kind === 'photos'
+    ? 'Three steps: upload a photo of each room, pick a style and redesign them, then make the mood board.'
+    : 'Four steps: upload the plan or model, name the rooms, style and design them, then walk through it and export.'));
+  const del = el('button', { type: 'button', class: 'quiet' }, 'Delete this house…');
+  del.onclick = async () => {
+    if (!confirm(`Delete "${h.title}"? Its folder, model, photos and website go to the Recycle Bin, where you can still get them back.`)) return;
+    try { const r = await call('/api/house', { action: 'remove', id: current }); current = null; view = null; location.href = 'index.html#deleted=' + encodeURIComponent(r.where); }
+    catch (err) { alertLine(err.message); }
+  };
+  head.append(del);
+  main.append(head, el('p', { id: 'msg', class: 'good', role: 'status' }, ''));
+  if (h.kind === 'photos') return renderPhotos(main);
+
+  // ---- step 1: the model
+  const s1 = el('section', { class: 'step', id: 's-model' });
+  const h1 = el('header'); const t1 = el('h3'); t1.append(el('span', {}, '1'), h.start === 'obj' ? 'The Sweet Home 3D model' : 'The floor plan'); h1.append(t1); s1.append(h1);
+  s1.append(el('p', { class: 'hint' }, h.start === 'obj'
+    ? 'In Sweet Home 3D: 3D view, Export to OBJ format, into a folder of its own. Then upload that folder (or pick the .obj, the .mtl and the pictures, or one zip of them). A plan .json works too.'
+    : 'Upload the floor plan: a PDF, a scan or a photo of the drawing. Claude measures the rooms from the dimension lines while Gemini marks the doors, windows and furniture. Have a Sweet Home 3D export instead? Upload its files here and it is used as it is.'));
+  const drop = el('div', { id: 'drop', tabindex: '0', role: 'button' }, 'Or drop the files here');
+  const pick = el('input', { type: 'file', multiple: '', accept: '.obj,.mtl,.zip,.json,.pdf,.jpg,.jpeg,.png,.webp,.gif,.bmp', hidden: '' });
+  drop.onclick = () => pick.click();
+  drop.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') pick.click(); };
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('hot'); };
+  drop.ondragleave = () => drop.classList.remove('hot');
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove('hot'); upload([...e.dataTransfer.files]); };
+  pick.onchange = () => upload([...pick.files]);
+  // Sweet Home 3D's export is several files in one folder: a button for the files and one for the whole folder.
+  const folderPick = el('input', { type: 'file', webkitdirectory: '', hidden: '' });
+  folderPick.onchange = () => upload([...folderPick.files]);
+  const ups = el('div', { class: 'row' });
+  const upFiles = el('button', { type: 'button', class: 'go' }, 'Upload files…'); upFiles.onclick = () => pick.click();
+  const upFolder = el('button', { type: 'button' }, 'Upload the whole export folder…'); upFolder.onclick = () => folderPick.click();
+  ups.append(upFiles, upFolder);
+  s1.append(ups, drop, pick, folderPick);
+  if (view.files.length) s1.append(el('p', { class: 'facts' }, 'Files: ' + view.files.join(', ')));
+  if (view.plan_picture) {                       // a floor plan picture: Claude reads it (one call with thinking, about 10-20c)
+    const rr = el('div', { class: 'row' });
+    const rb = el('button', { type: 'button', class: h.kind ? '' : 'go' }, `${h.kind ? 'Read my floor plan again' : 'Read my floor plan'} (${view.plan_picture})`);
+    rb.onclick = async () => {
+      if (h.kind && !confirm('Read the plan again? Your room names, fixes and furniture on this house are replaced by the new reading.')) return;
+      rb.disabled = true; alertLine('Reading the plan: every room, door, window and piece of furniture, then measuring it. Give it a minute or two…', true);
+      try { view = await call('/api/house', { action: 'read_plan', id: current }); rooms = (view.house.rooms || []).map(r => ({ ...r })); render(); alertLine('Plan read. Check it against your plan: a room size in orange is far from the size written on the plan.', true); list(); }
+      catch (err) { alertLine(err.message); rb.disabled = false; }
+    };
+    rr.append(rb, el('span', { class: 'facts' }, 'Claude measures the rooms from the dimension lines while Gemini marks the doors, windows, furniture and outside spaces, about 15-25c and a minute or two. It is a first draft: fix anything it got wrong with Walls and Doors and windows on the plan.')); s1.append(rr);
+  }
+  if (h.plan_unsure) s1.append(el('p', { class: 'facts' }, 'Claude says: ' + h.plan_unsure));
+  if (h.size) {
+    const f = el('p', { class: 'facts' });
+    f.append('Size ', el('b', {}, `${h.size[0].toFixed(2)} × ${h.size[1].toFixed(2)} m`));
+    if (h.kind === 'obj') f.append(` · read in ${h.found_unit} · ${h.pictures || 0} pictures`);
+    s1.append(f);
+    const row = el('div', { class: 'row' });
+    if (h.kind === 'obj') {
+      const lu = el('label', {}, 'The model is in'); const su = el('select');
+      for (const [v, t] of [['auto', `worked out (${h.found_unit})`], ['m', 'metres'], ['cm', 'centimetres'], ['mm', 'millimetres'], ['in', 'inches'], ['ft', 'feet']]) { const o = el('option', { value: v }, t); if ((h.unit || 'auto') === v) o.selected = true; su.append(o); }
+      su.onchange = () => saveNow({ unit: su.value }, true);
+      lu.append(su); row.append(lu);
+    }
+    const lw = el('label', {}, 'Wall height (m)'); const iw = el('input', { type: 'number', step: '0.05', min: '1.8', max: '6', value: h.wall_height || 2.6, style: 'width:90px' });
+    iw.onchange = () => saveNow({ wall_height: iw.value });
+    lw.append(iw); row.append(lw);
+    s1.append(row);
+  }
+  main.append(s1);
+  if (!h.size) return;
+
+  // ---- step 2: rooms and the front door
+  const s2 = el('section', { class: 'step', id: 's-rooms' });
+  const h2 = el('header'); const t2 = el('h3'); t2.append(el('span', {}, '2'), 'Name the rooms');
+  const doorBtn = el('button', { type: 'button' }, 'Set the front door');
+  doorBtn.onclick = () => { doorMode = !doorMode; doorBtn.classList.toggle('on', doorMode); doorBtn.textContent = doorMode ? 'Click the front door on the plan' : 'Set the front door'; };
+  h2.append(t2, doorBtn); s2.append(h2);
+  s2.append(el('p', { class: 'hint' }, 'Drag a box over each room on the plan and type its name. The tour visits them in this order; use the arrows to change it. The yellow dot is the front door: the walk starts there.'));
+  if (h.kind === 'plan' && view.plan) {          // fix what the read got wrong: walls, doors, windows
+    const tools = el('div', { class: 'tools' });
+    for (const [k, t] of [['rooms', 'Rooms'], ['walls', 'Walls'], ['openings', 'Doors and windows']]) {
+      const b = el('button', { type: 'button' }, t); b.classList.toggle('on', tool === k);
+      b.onclick = () => { tool = k; sel = null; tools.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); drawTop($('top')); drawFix(); };
+      tools.append(b);
+    }
+    s2.append(tools);
+  }
+  const box = el('div', { class: 'planbox' });
+  const topWrap = el('div');
+  const top = svg('svg', { id: 'top' }); topWrap.append(top, el('div', { id: 'fix' })); box.append(topWrap);
+  const ul = el('ul', { id: 'rooms' }); box.append(ul);
+  s2.append(box);
+  const tr = el('div', { class: 'row' });
+  const lt = el('label', {}, 'Name on the website'); const it = el('input', { value: h.title, maxlength: '80', style: 'width:260px' }); it.onchange = () => saveNow({ title: it.value }); lt.append(it);
+  const lb = el('label', {}, 'Your name or business (top left)'); const ib = el('input', { value: h.brand || '', maxlength: '60', placeholder: 'Optional', style: 'width:220px' }); ib.onchange = () => saveNow({ brand: ib.value }); lb.append(ib);
+  const ls = el('label', {}, 'One line under the plan (optional)'); const is = el('input', { value: h.subtitle || '', maxlength: '300', style: 'width:420px;max-width:100%' }); is.onchange = () => saveNow({ subtitle: is.value }); ls.append(is);
+  tr.append(lt, lb, ls); s2.append(tr);
+  main.append(s2);
+  drawTop(top); drawRooms(ul); drawFix();
+
+  // ---- step 3: the designer (optional)
+  const sd = el('section', { class: 'step', id: 'design' });
+  main.append(sd); renderDesign(sd);
+
+  // ---- step 4: preview and export
+  const s3 = el('section', { class: 'step', id: 's-export' });
+  const h3 = el('header'); const t3 = el('h3'); t3.append(el('span', {}, '4'), 'Walk through it and export'); h3.append(t3); s3.append(h3);
+  const row = el('div', { class: 'row' });
+  const pv = el('button', { type: 'button', class: 'go' }, 'Preview the walkthrough');
+  const ex = el('button', { type: 'button', class: 'go' }, 'Export the website');
+  const op = el('button', { type: 'button' }, 'Open it in the browser');
+  op.disabled = !view.exported;
+  const out = el('span', { class: 'facts' }, view.exported ? `Saved as ${view.exported}` : '');
+  row.append(pv, ex, op, out); s3.append(row);
+  const frame = el('iframe', { id: 'frame', title: 'Walkthrough preview', sandbox: 'allow-scripts' });
+  s3.append(frame);
+  pv.onclick = async () => { await flush(); frame.classList.add('on'); frame.src = '/api/preview?id=' + encodeURIComponent(current) + '&t=' + Date.now(); };
+  ex.onclick = async () => {
+    await flush(); ex.disabled = true; out.textContent = 'Building the page…';
+    try { const r = await call('/api/house', { action: 'export', id: current }); out.textContent = `Saved in the house's folder: ${r.file} (${r.mb} MB). That one file is the whole website.`; op.disabled = false; list(); }
+    catch (err) { out.textContent = ''; alertLine(err.message); }
+    ex.disabled = false;
+  };
+  op.onclick = async () => { try { await call('/api/house', { action: 'open', id: current }); } catch (err) { alertLine(err.message); } };
+  const mrow = el('div', { class: 'row' });
+  const mb = el('button', { type: 'button' }, 'Make the mood board PDF');
+  const mo = el('button', { type: 'button' }, 'Open the PDF');
+  mo.disabled = !view.moodboard;
+  const mout = el('span', { class: 'facts' }, view.moodboard ? `Saved as ${view.moodboard}` : 'A cover with the plan and palette, then one page per designed room: photo, swatches, furniture.');
+  mb.onclick = async () => {
+    await flush(); mb.disabled = true; mout.textContent = 'Making the PDF…';
+    try { const r = await call('/api/house', { action: 'moodboard', id: current }); mout.textContent = `Saved next to the website: ${r.file} (${r.kb} KB). Open it and print from there.`; mo.disabled = false; view.moodboard = r.file; }
+    catch (err) { mout.textContent = ''; alertLine(err.message); }
+    mb.disabled = false;
+  };
+  mo.onclick = async () => { try { await call('/api/house', { action: 'open', id: current, what: 'moodboard' }); } catch (err) { alertLine(err.message); } };
+  mrow.append(mb, mo, mout); s3.append(mrow);
+  main.append(s3);
+}
+
+// ---- the designer: a style, a photo per room (Nano Banana: Flash, or Pro for one room), palettes, furniture, checks
+let pollTimer = null;
+function renderDesign(sd) {
+  const d = view.design, h = view.house, work = view.work;
+  sd.replaceChildren();
+  const photos = h.kind === 'photos';
+  const hd = el('header'); const t = el('h3'); t.append(el('span', {}, photos ? '2' : '3'), photos ? 'Pick a style and redesign the rooms' : 'Style and design the rooms');
+  const sl = el('a', { class: 'btn', href: 'styles.html#' + encodeURIComponent(current) }, 'See all 14 styles');
+  hd.append(t, sl); sd.append(hd);
+  if (photos) sd.append(el('p', { class: 'hint' }, 'Gemini (Nano Banana) redesigns each of your photos in the style you pick, the way an interior designer would: the same walls, windows and camera angle, with new furniture, colours, floors, rugs and light. A room can have its own style (a spa bathroom, a playful kids\' room): pick it on the room\'s card first.'));
+  else sd.append(el('p', { class: 'hint' }, 'Pick a style and Gemini (Nano Banana) photograph each room as an interior designer would, in one house palette. A room can have its own style (a spa bathroom, a playful kids\' room): pick it on the room\'s card before you design it. Each photo becomes a mood board on that room\'s card, and its colours and furniture are put into the 3D house. Then the layout is checked: walking routes between doors, kitchen work triangle, bathroom clearances.'));
+  const list_ = photos ? (h.rooms || []) : rooms;
+  if (!list_.length) { sd.append(el('p', { class: 'facts' }, photos ? 'Upload a photo of each room first.' : 'Name the rooms first.')); return; }
+  const row = el('div', { class: 'row' });
+  const ls = el('label', {}, 'Style'); const ss = el('select');
+  for (const [k, n] of Object.entries(view.styles || {})) { const o = el('option', { value: k }, n); if (d.style === k) o.selected = true; ss.append(o); }
+  ss.onchange = async () => { await saveDesign({ style: ss.value }); };
+  ls.append(ss);
+  const lw = el('label', {}, 'Anything the owner wants (optional)'); const iw = el('input', { value: d.wish || '', maxlength: '300', placeholder: 'e.g. a reading corner, lots of plants', style: 'width:320px;max-width:100%' });
+  iw.onchange = () => saveDesign({ wish: iw.value }); lw.append(iw);
+  row.append(ls, lw); sd.append(row);
+  const pal = el('div', { class: 'swrow' });
+  for (const p of d.palette || []) { const s = el('span', { class: 'sw', title: `${p.hex} · ${p.use}` }); const i = el('i'); i.style.background = p.hex; s.append(i, `${p.name} (${p.use})`); pal.append(s); }
+  sd.append(pal);
+  const opts = el('div', { class: 'row' });
+  if (photos) opts.hidden = true;
+  const fu = el('label', { class: 'check' }); const fc = el('input', { type: 'checkbox' }); fc.checked = !!d.furnish;
+  fc.onchange = () => saveDesign({ furnish: fc.checked });
+  fu.append(fc, h.kind === 'obj' ? 'Add the designer\'s furniture too (your model has its own)' : 'Put the designer\'s furniture in the house');
+  opts.append(fu);
+  if (h.kind === 'obj') {
+    const rl = el('label', { class: 'check' }); const rc = el('input', { type: 'checkbox' }); rc.checked = !!d.recolour;
+    rc.onchange = () => saveDesign({ recolour: rc.checked }); rl.append(rc, 'Paint the model\'s walls and floors in the palette'); opts.append(rl);
+  }
+  sd.append(opts);
+  const go = el('div', { class: 'row' });
+  const all = el('button', { type: 'button', class: 'go' }, `${photos ? 'Redesign' : 'Design'} every room (Flash, about ${list_.length * d.cost.flash}c)`);
+  const again = el('button', { type: 'button', title: 'Free: no model call' }, 'Place the furniture again');
+  const state = el('span', { class: 'facts' });
+  all.disabled = again.disabled = !!(work && work.running);
+  all.onclick = () => design(null, false);
+  again.onclick = async () => { try { view = { ...view, ...(await call('/api/house', { action: 'furnish', id: current })) }; renderDesign(sd); alertLine('Furniture placed and checked again.', true); } catch (err) { alertLine(err.message); } };
+  if (work && work.running) state.textContent = `Designing ${work.room} (${work.done + 1} of ${work.total}, ${work.model === 'pro' ? 'Pro' : 'Flash'})…`;
+  else if (work && work.errors && work.errors.length) state.textContent = work.errors.join(' · ');
+  if (photos) again.hidden = true;
+  go.append(all, again, state); sd.append(go);
+  const grid = el('div', { class: 'designs' });
+  for (const r of list_) {
+    const rd = (d.rooms || {})[r.name] || {};
+    const c = el('div', { class: 'dcard' });
+    if (photos) {
+      const pair = el('div', { class: 'pair' });
+      const before = el('figure'); before.append(el('img', { src: `/api/photo?which=before&id=${encodeURIComponent(current)}&room=${encodeURIComponent(r.name)}&s=${encodeURIComponent(r.source || '')}`, alt: `${r.name}, as it is now` }), el('figcaption', {}, 'Now'));
+      const after = el('figure');
+      if (rd.photo) after.append(el('img', { src: `/api/photo?id=${encodeURIComponent(current)}&room=${encodeURIComponent(r.name)}&t=${encodeURIComponent(rd.made)}`, alt: `${r.name}, redesigned` }));
+      else after.append(el('div', { class: 'ph' }, 'Not redesigned yet'));
+      after.append(el('figcaption', {}, 'Redesigned'));
+      pair.append(before, after); c.append(pair);
+      const nm = el('input', { value: r.name, maxlength: '40', 'aria-label': 'Room name' });
+      nm.onchange = () => saveNow({ names: { [r.source]: nm.value } }, true);
+      c.append(nm);
+    } else if (rd.photo) c.append(el('img', { src: `/api/photo?id=${encodeURIComponent(current)}&room=${encodeURIComponent(r.name)}&t=${encodeURIComponent(rd.made)}`, alt: `${r.name}, as designed` }));
+    else c.append(el('div', { class: 'ph' }, 'No photo yet'));
+    if (!photos) c.append(el('b', {}, r.name));
+    c.append(el('small', {}, photos ? (rd.photo ? `${rd.model === 'pro' ? 'Nano Banana Pro' : 'Nano Banana Flash'} · ${rd.made}` : 'Your photo') : rd.photo ? `${rd.model === 'pro' ? 'Nano Banana Pro' : 'Nano Banana Flash'} · ${rd.items} pieces of furniture` : `${rd.items || 0} pieces from the room's usual kit`));
+    const rs = el('select', { 'aria-label': `Style for ${r.name}`, title: 'This room\'s own style and palette, before you design it' });
+    rs.append(el('option', { value: '' }, `Style: same as the house`));
+    for (const [k, n] of Object.entries(view.styles || {})) { if (k === d.style) continue; const o = el('option', { value: k }, n); if (rd.style === k) o.selected = true; rs.append(o); }
+    rs.disabled = !!(work && work.running);
+    rs.onchange = () => saveDesign({ room_style: { [r.name]: rs.value } });
+    c.append(rs);
+    const shown = (rd.palette || []).length && !rd.style ? rd.palette : (rd.style_palette || []).length ? rd.style_palette : rd.palette || [];
+    if (rd.style && rd.photo) c.append(el('small', {}, 'Redo this room to see its own style.'));
+    if (shown.length) { const sw = el('div', { class: 'swrow' }); for (const p of shown.slice(0, 6)) { const i = el('i', { title: p.name }); i.style.cssText = `background:${p.hex};width:22px;height:16px;border-radius:4px;display:inline-block`; sw.append(i); } c.append(sw); }
+    const btns = el('div', { class: 'btns' });
+    const redo = el('button', { type: 'button' }, rd.photo ? `Redo (${d.cost.flash}c)` : `${photos ? 'Redesign' : 'Design'} it (${d.cost.flash}c)`);
+    const pro = el('button', { type: 'button', class: 'go', title: 'Nano Banana Pro: sharper, better furniture and light' }, `Make it better (Pro, ${d.cost.pro}c)`);
+    redo.disabled = pro.disabled = !!(work && work.running);
+    redo.onclick = () => design([r.name], false); pro.onclick = () => design([r.name], true);
+    btns.append(redo, pro); c.append(btns);
+    if ((rd.checks || []).length) { const ul = el('ul'); for (const k of rd.checks) { const li = el('li', { class: k.ok ? '' : 'no' }, (k.ok ? '✓ ' : '! ') + k.text.replace(r.name + ': ', '')); ul.append(li); } c.append(ul); }
+    grid.append(c);
+  }
+  sd.append(grid);
+  clearTimeout(pollTimer);
+  if (work && work.running) pollTimer = setTimeout(pollDesign, 2500);
+}
+async function pollDesign() {
+  try { const v = await call('/api/house?id=' + encodeURIComponent(current)); view.design = v.design; view.work = v.work; const sd = $('design'); if (sd) renderDesign(sd); if (v.work && !v.work.running) { view.house = v.house; alertLine(v.work.errors && v.work.errors.length ? 'Some rooms were not designed: see their cards.' : view.house.kind === 'photos' ? 'Rooms redesigned. Make the mood board when you like them.' : 'Rooms designed. Walk through the house to see them.', !(v.work.errors && v.work.errors.length)); } }
+  catch (err) { alertLine(err.message); }
+}
+async function design(names, pro) {
+  await flush();
+  try { await call('/api/house', { action: 'design', id: current, rooms: names, pro }); alertLine(pro ? 'Nano Banana Pro is designing the room…' : 'Designing…', true); await pollDesign(); }
+  catch (err) { alertLine(err.message); }
+}
+async function saveDesign(changes) {
+  await flush();
+  try { const v = await call('/api/house', { action: 'save', id: current, design: changes }); view.house = v.house; view.design = v.design; const sd = $('design'); if (sd) renderDesign(sd); alertLine('Saved.', true); }
+  catch (err) { alertLine(err.message); }
+}
+
+const TAKES = /\.(obj|mtl|zip|json|pdf|jpe?g|png|webp|gif|bmp)$/i, PHOTOS = /\.(jpe?g|png|webp)$/i;
+async function upload(all) {
+  const files = all.filter(f => (view.house.kind === 'photos' ? PHOTOS : TAKES).test(f.name) && !/^\./.test(f.name));
+  if (!files.length) { if (all.length) alertLine(view.house.kind === 'photos' ? 'Send JPG, PNG or WebP photos.' : 'None of those are model files: look for the .obj, the .mtl and the pictures.'); return; }
+  alertLine(`Sending ${files.length} file${files.length > 1 ? 's' : ''}…`, true);
+  try {
+    for (const f of files) {
+      const r = await fetch('/api/upload?id=' + encodeURIComponent(current), { method: 'POST', headers: { 'X-Filename': encodeURIComponent(f.name), 'Content-Type': 'application/octet-stream' }, body: f });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `${f.name} was not taken.`);
+    }
+    if (view.house.kind === 'photos') { view = await call('/api/house?id=' + encodeURIComponent(current)); render(); alertLine(`${files.length} photo${files.length > 1 ? 's' : ''} added. Name each room on its card, then pick a style.`, true); return; }
+    alertLine('Reading the model…', true);
+    try { view = await call('/api/house', { action: 'process', id: current }); }
+    catch (err) {                               // a floor plan picture: show its Read button
+      view = await call('/api/house?id=' + encodeURIComponent(current));
+      if (!view.plan_picture) throw err;
+      render(); alertLine('That\'s a floor plan picture. Press "Read my floor plan" and Claude and Gemini turn it into walls, rooms, doors and furniture.', true); list(); return;
+    }
+    rooms = (view.house.rooms || []).map(r => ({ ...r }));
+    render(); alertLine('Model read. Now name the rooms.', true); list();
+  } catch (err) { alertLine(err.message); }
+}
+
+// ---- the top view: plan metres, y north (up on screen)
+function drawTop(top) {
+  const [W, D] = view.house.size, m = Math.max(1, Math.max(W, D) * 0.06);
+  top.setAttribute('viewBox', `${-m} ${-m} ${W + 2 * m} ${D + 2 * m}`);
+  top.replaceChildren();
+  const Y = y => D - y;
+  top.append(svg('rect', { x: 0, y: 0, width: W, height: D, fill: 'none', stroke: '#c9c2b2', 'stroke-width': 0.03, 'stroke-dasharray': '0.2 0.15' }));
+  const g = svg('g', { stroke: '#1c1b1a', 'stroke-width': Math.max(0.025, Math.max(W, D) / 500), 'stroke-linecap': 'round' });
+  const path = [];
+  for (const [x0, y0, x1, y1] of view.lines || []) path.push(`M${x0} ${Y(y0)}L${x1} ${Y(y1)}`);
+  const marks = [];                              // doors (a gap and a swing) and windows (thin lines across the gap)
+  if (view.plan) for (const r of view.plan.rooms || []) if (r.outside || r.part_of) {
+    top.append(svg('rect', { x: r.x[0], y: Y(r.y[1]), width: r.x[1] - r.x[0], height: r.y[1] - r.y[0], fill: r.outside ? 'rgba(120,140,110,.12)' : 'rgba(143,180,255,.1)', stroke: '#9a9286', 'stroke-width': 0.03, 'stroke-dasharray': r.outside ? '0.15 0.1' : '' }));
+    if (r.outside) { const t = svg('text', { x: (r.x[0] + r.x[1]) / 2, y: Y((r.y[0] + r.y[1]) / 2), 'text-anchor': 'middle', 'dominant-baseline': 'middle', 'font-size': 0.28, fill: '#7b7468', 'font-style': 'italic', 'font-family': 'Courier New, monospace' }); t.textContent = r.name; top.append(t); }
+  }
+  if (view.plan) for (const it of view.plan.items || []) {
+    const [w, d] = it.rot === 90 || it.rot === 270 ? [it.d, it.w] : [it.w, it.d];
+    top.append(svg('rect', { x: it.x - w / 2, y: Y(it.y + d / 2), width: w, height: d, rx: 0.05, fill: 'rgba(60,55,50,.07)', stroke: '#a39a8c', 'stroke-width': 0.02 }));
+  }
+  if (view.plan) for (const w of view.plan.walls || []) {
+    const L = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]) || 1, ux = (w.b[0] - w.a[0]) / L, uy = (w.b[1] - w.a[1]) / L;
+    const at = d => [w.a[0] + ux * d, w.a[1] + uy * d];
+    const seg = (d0, d1) => { if (d1 - d0 > 0.01) { const [p, q] = at(d0), [r, t] = at(d1); path.push(`M${p} ${Y(q)}L${r} ${Y(t)}`); } };
+    const ops = (view.plan.openings || []).filter(o => o.wall === w.id).sort((a, b) => a.from - b.from);
+    let d = 0;
+    for (const o of ops) {
+      seg(d, o.from); d = Math.max(d, o.to);
+      const [x0, y0] = at(o.from), [x1, y1] = at(o.to), nx = -uy, ny = ux, len = o.to - o.from;
+      const on = sel && sel.op === o, col = on ? '#e8622a' : null;
+      if (o.kind === 'window') for (const k of [-0.05, 0.05]) marks.push(svg('line', { x1: x0 + nx * k, y1: Y(y0 + ny * k), x2: x1 + nx * k, y2: Y(y1 + ny * k), stroke: col || '#3a6fd8', 'stroke-width': on ? 0.07 : 0.04 }));
+      else if (o.kind === 'door') {
+        const f = o.flip ? -1 : 1;
+        marks.push(svg('path', { d: `M${x0} ${Y(y0)}L${x0 + nx * len * f} ${Y(y0 + ny * len * f)}A${len} ${len} 0 0 ${f > 0 ? 0 : 1} ${x1} ${Y(y1)}`, fill: 'none', stroke: col || (/front/i.test(o.name || '') ? '#e8622a' : '#8a6a3a'), 'stroke-width': on ? 0.07 : 0.04 }));
+      } else {                                        // sliding: two panels; garage: a dashed line; opening: nothing but the gap
+        const dash = o.kind === 'garage' ? '0.25 0.12' : o.kind === 'opening' ? '0.06 0.12' : '';
+        const k = o.kind === 'sliding' ? [-0.04, 0.04] : [0];
+        for (const q of k) marks.push(svg('line', { x1: x0 + nx * q, y1: Y(y0 + ny * q), x2: o.kind === 'sliding' ? x0 + (x1 - x0) * (q < 0 ? 0.6 : 1) + nx * q : x1, y2: o.kind === 'sliding' ? Y(y0 + (y1 - y0) * (q < 0 ? 0.6 : 1) + ny * q) : Y(y1), stroke: col || '#8a6a3a', 'stroke-width': on ? 0.07 : 0.04, 'stroke-dasharray': dash }));
+        if (o.kind === 'sliding') marks[marks.length - 1].setAttribute('x1', x0 + (x1 - x0) * 0.4 + nx * k[1]), marks[marks.length - 1].setAttribute('y1', Y(y0 + (y1 - y0) * 0.4 + ny * k[1]));
+      }
+    }
+    seg(d, L);
+    if (sel && sel.wall === w) marks.push(svg('line', { x1: w.a[0], y1: Y(w.a[1]), x2: w.b[0], y2: Y(w.b[1]), stroke: '#e8622a', 'stroke-width': w.t + 0.06, opacity: 0.55, 'stroke-linecap': 'square' }));
+  }
+  g.append(svg('path', { d: path.join(''), 'stroke-width': view.plan ? 0.15 : undefined, 'stroke-linecap': view.plan ? 'square' : 'round' }));
+  top.append(g);
+  const rg = svg('g'); top.append(rg);
+  rooms.forEach((r, i) => {
+    const on = i === picked;
+    rg.append(svg('rect', { x: r.x[0], y: Y(r.y[1]), width: r.x[1] - r.x[0], height: r.y[1] - r.y[0], fill: on ? 'rgba(232,98,42,.22)' : 'rgba(143,180,255,.2)', stroke: on ? '#e8622a' : '#5b7bd0', 'stroke-width': 0.05 }));
+    const t = svg('text', { x: (r.x[0] + r.x[1]) / 2, y: Y((r.y[0] + r.y[1]) / 2), 'text-anchor': 'middle', 'dominant-baseline': 'middle', 'font-size': Math.max(0.18, Math.min(0.45, (r.x[1] - r.x[0]) * 0.9 / (Math.max(4, r.name.length + 3) * 0.62))), fill: '#1d1b19', 'font-family': 'Courier New, monospace', 'font-weight': 700 });
+    t.textContent = `${i + 1}. ${r.name}`; rg.append(t);
+  });
+  marks.forEach(m => top.append(m));              // doors and windows over the room boxes, so a picked one shows
+  const e = view.house.entrance;
+  if (e) top.append(svg('circle', { cx: e.x, cy: Y(e.y), r: Math.max(0.18, Math.max(W, D) / 60), fill: '#ffc65c', stroke: '#1d1b19', 'stroke-width': 0.04 }));
+  // snapping to the walls' lines makes boxes line up with the rooms
+  const xs = [0, W], ys = [0, D];
+  for (const [x0, y0, x1, y1] of view.lines || []) { if (Math.abs(x0 - x1) < 0.02) xs.push(x0); if (Math.abs(y0 - y1) < 0.02) ys.push(y0); }
+  if (view.plan) for (const w of view.plan.walls || []) { xs.push(w.a[0], w.b[0]); ys.push(w.a[1], w.b[1]); }
+  const snap = (v, list) => { let best = v, d = 0.25; for (const s of list) if (Math.abs(s - v) < d) { d = Math.abs(s - v); best = s; } return Math.round(best * 100) / 100; };
+  const at = ev => { const p = top.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY; const q = p.matrixTransform(top.getScreenCTM().inverse()); return [q.x, D - q.y]; };
+  let start = null, ghost = null;
+  top.onpointerdown = ev => {
+    const [x, y] = at(ev);
+    if (!doorMode && tool !== 'rooms' && view.plan) { fixDown(top, ev, x, y, snap, xs, ys); return; }
+    if (doorMode) { view.house.entrance = { x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 }; saveNow({ entrance: view.house.entrance }); drawTop(top); return; }
+    start = [snap(x, xs), snap(y, ys)]; top.setPointerCapture(ev.pointerId);
+    ghost = svg('rect', { fill: 'rgba(94,242,194,.2)', stroke: '#1d9e7a', 'stroke-width': 0.05 }); top.append(ghost);
+  };
+  top.onpointermove = ev => {
+    if (drag) { fixMove(top, ...at(ev), snap, xs, ys); return; }
+    if (!start) return;
+    const [x, y] = at(ev), x1 = snap(x, xs), y1 = snap(y, ys);
+    ghost.setAttribute('x', Math.min(start[0], x1)); ghost.setAttribute('y', Y(Math.max(start[1], y1)));
+    ghost.setAttribute('width', Math.abs(x1 - start[0])); ghost.setAttribute('height', Math.abs(y1 - start[1]));
+  };
+  top.onpointerup = ev => {
+    if (drag) { fixUp(top, ...at(ev)); return; }
+    if (!start) return;
+    const [x, y] = at(ev), x1 = snap(x, xs), y1 = snap(y, ys), s = start; start = null;
+    if (Math.abs(x1 - s[0]) < 0.5 || Math.abs(y1 - s[1]) < 0.5) {      // a click: pick the room under it
+      picked = rooms.findIndex(r => x > r.x[0] && x < r.x[1] && y > r.y[0] && y < r.y[1]);
+      drawTop(top); drawRooms($('rooms')); return;
+    }
+    rooms.push({ name: `Room ${rooms.length + 1}`, x: [Math.min(s[0], x1), Math.max(s[0], x1)], y: [Math.min(s[1], y1), Math.max(s[1], y1)], note: '' });
+    picked = rooms.length - 1; saveRooms(); drawTop(top); drawRooms($('rooms'));
+    const inp = $('rooms').querySelectorAll('input.name')[picked]; if (inp) { inp.focus(); inp.select(); }
+  };
+}
+
+// ---- the fix tools (a plan read from a picture is a draft): pick, move, change, add or delete walls and openings
+let drag = null;
+const wallLen = w => Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]) || 1;
+function nearWall(x, y, most = 0.35) {
+  let best = null;
+  for (const w of view.plan.walls || []) {
+    const L = wallLen(w), ux = (w.b[0] - w.a[0]) / L, uy = (w.b[1] - w.a[1]) / L;
+    const t = Math.max(0, Math.min(L, (x - w.a[0]) * ux + (y - w.a[1]) * uy));
+    const dist = Math.hypot(w.a[0] + ux * t - x, w.a[1] + uy * t - y);
+    if (dist <= most && (!best || dist < best.dist)) best = { w, t, dist, ux, uy, L };
+  }
+  return best;
+}
+function nearOpening(x, y) {
+  let best = null;
+  for (const o of view.plan.openings || []) {
+    const w = (view.plan.walls || []).find(q => q.id === o.wall); if (!w) continue;
+    const L = wallLen(w), m = (o.from + o.to) / 2, px = w.a[0] + (w.b[0] - w.a[0]) / L * m, py = w.a[1] + (w.b[1] - w.a[1]) / L * m;
+    const dist = Math.hypot(px - x, py - y);
+    if (dist <= Math.max(0.45, (o.to - o.from) / 2) && (!best || dist < best.dist)) best = { o, w, dist };
+  }
+  return best;
+}
+function fixDown(top, ev, x, y, snap, xs, ys) {
+  if (tool === 'walls') {
+    const hit = nearWall(x, y);
+    if (hit) { sel = { wall: hit.w }; drag = { kind: 'wall', w: hit.w, x, y, a: [...hit.w.a], b: [...hit.w.b], moved: false }; }
+    else { sel = null; drag = { kind: 'new', start: [snap(x, xs), snap(y, ys)], ghost: null }; }
+  } else {
+    const hit = nearOpening(x, y);
+    if (hit) { sel = { op: hit.o }; drag = { kind: 'op', o: hit.o, w: hit.w, from: hit.o.from, to: hit.o.to, x, y, moved: false }; }
+    else {
+      const wh = nearWall(x, y);
+      if (wh) {                                      // a click on a wall puts the chosen kind there
+        const width = Math.min(KIND_WIDTH[addKind], wh.L - 0.2), from = Math.max(0, Math.min(wh.L - width, wh.t - width / 2));
+        const o = { wall: wh.w.id, from: +from.toFixed(3), to: +(from + width).toFixed(3), kind: addKind, name: '' };
+        view.plan.openings = [...(view.plan.openings || []), o]; sel = { op: o }; commitPlan();
+      } else sel = null;
+    }
+  }
+  top.setPointerCapture(ev.pointerId); drawTop(top); drawFix();
+}
+function fixMove(top, x, y, snap, xs, ys) {
+  const Y = v => view.house.size[1] - v;
+  if (drag.kind === 'wall') {                       // slide the wall across itself; walls joined to its ends follow
+    const w = drag.w, L = wallLen({ a: drag.a, b: drag.b }), nx = -(drag.b[1] - drag.a[1]) / L, ny = (drag.b[0] - drag.a[0]) / L;
+    const k = Math.round(((x - drag.x) * nx + (y - drag.y) * ny) * 100) / 100;
+    if (Math.abs(k) > 0.02) drag.moved = true;
+    const na = [drag.a[0] + nx * k, drag.a[1] + ny * k], nb = [drag.b[0] + nx * k, drag.b[1] + ny * k];
+    for (const q of view.plan.walls) if (q !== w) for (const end of ['a', 'b']) {
+      const p = q['_' + end] || (q['_' + end] = [...q[end]]), o = end === 'a' ? q._b || q.b : q._a || q.a;
+      const qx = o[0] - p[0], qy = o[1] - p[1], ql = Math.hypot(qx, qy) || 1;
+      if (Math.abs(qx / ql * nx + qy / ql * ny) < 0.7) continue;    // only walls running across it stretch to follow
+      if (Math.hypot(p[0] - drag.a[0], p[1] - drag.a[1]) < 0.03) q[end] = [+na[0].toFixed(3), +na[1].toFixed(3)];
+      if (Math.hypot(p[0] - drag.b[0], p[1] - drag.b[1]) < 0.03) q[end] = [+nb[0].toFixed(3), +nb[1].toFixed(3)];
+    }
+    w.a = [+na[0].toFixed(3), +na[1].toFixed(3)]; w.b = [+nb[0].toFixed(3), +nb[1].toFixed(3)];
+    drawTop(top);
+  } else if (drag.kind === 'op') {                  // slide the door or window along its wall
+    const w = drag.w, L = wallLen(w), k = (x - drag.x) * (w.b[0] - w.a[0]) / L + (y - drag.y) * (w.b[1] - w.a[1]) / L;
+    const width = drag.to - drag.from, from = Math.max(0, Math.min(L - width, drag.from + k));
+    if (Math.abs(k) > 0.02) drag.moved = true;
+    drag.o.from = +from.toFixed(3); drag.o.to = +(from + width).toFixed(3); drawTop(top);
+  } else if (drag.kind === 'new') {                 // draw a new wall, straight across or up the plan
+    let [x1, y1] = [snap(x, xs), snap(y, ys)]; const [x0, y0] = drag.start;
+    if (Math.abs(x1 - x0) >= Math.abs(y1 - y0)) y1 = y0; else x1 = x0;
+    drag.end = [x1, y1];
+    if (!drag.ghost) { drag.ghost = svg('line', { stroke: '#1d9e7a', 'stroke-width': 0.11 }); top.append(drag.ghost); }
+    drag.ghost.setAttribute('x1', x0); drag.ghost.setAttribute('y1', Y(y0)); drag.ghost.setAttribute('x2', x1); drag.ghost.setAttribute('y2', Y(y1));
+  }
+}
+function fixUp(top) {
+  const d = drag; drag = null;
+  for (const q of view.plan.walls) { delete q._a; delete q._b; }
+  if (d.kind === 'wall' && d.moved) {               // room boxes whose edge sat on the wall move with it
+    const w = d.w, vertical = Math.abs(d.a[0] - d.b[0]) < 0.01, horizontal = Math.abs(d.a[1] - d.b[1]) < 0.01;
+    const lo = vertical ? Math.min(d.a[1], d.b[1]) : Math.min(d.a[0], d.b[0]), hi = vertical ? Math.max(d.a[1], d.b[1]) : Math.max(d.a[0], d.b[0]);
+    let any = false;
+    for (const r of rooms) for (const k of [0, 1]) {
+      if (vertical && Math.abs(r.x[k] - d.a[0]) < 0.05 && Math.min(r.y[1], hi) - Math.max(r.y[0], lo) > 0.3) { r.x[k] = w.a[0]; any = true; }
+      if (horizontal && Math.abs(r.y[k] - d.a[1]) < 0.05 && Math.min(r.x[1], hi) - Math.max(r.x[0], lo) > 0.3) { r.y[k] = w.a[1]; any = true; }
+    }
+    if (any) { saveRooms(); drawRooms($('rooms')); }
+  }
+  if (d.kind === 'new') {
+    if (d.end && Math.hypot(d.end[0] - d.start[0], d.end[1] - d.start[1]) >= 0.3) {
+      const ids = new Set(view.plan.walls.map(w => w.id)); let n = view.plan.walls.length + 1; while (ids.has('w' + n)) n++;
+      const w = { id: 'w' + n, a: d.start, b: d.end, t: 0.11 }; view.plan.walls.push(w); sel = { wall: w }; commitPlan();
+    }
+    drawTop(top); drawFix(); return;
+  }
+  if (d.moved) commitPlan();
+  drawFix();
+}
+let planTimer = null;
+function commitPlan(now) {                          // the edits go to the server: walls, openings and furniture
+  clearTimeout(planTimer);
+  planTimer = setTimeout(async () => {
+    const keep = sel && (sel.wall ? { wall: sel.wall.id } : { op: [sel.op.wall, sel.op.from] });
+    try {
+      const v = await call('/api/house', { action: 'plan', id: current, plan: { walls: view.plan.walls, openings: view.plan.openings, items: view.plan.items } });
+      Object.assign(view, { plan: v.plan, house: v.house, design: v.design });
+      if (keep && keep.wall) sel = { wall: view.plan.walls.find(w => w.id === keep.wall) };
+      else if (keep) sel = { op: (view.plan.openings || []).find(o => o.wall === keep.op[0] && Math.abs(o.from - keep.op[1]) < 0.01) };
+      if (sel && !sel.wall && !sel.op) sel = null;
+      drawTop($('top')); drawFix(); const sd = $('design'); if (sd) renderDesign(sd);
+    } catch (err) { alertLine(err.message); }
+  }, now ? 0 : 250);
+}
+function drawFix() {
+  const fix = $('fix'); if (!fix) return;
+  fix.replaceChildren();
+  if (tool === 'rooms' || !view.plan) return;
+  const btn = (t, fn, on) => { const b = el('button', { type: 'button' }, t); if (on) b.classList.add('on'); b.onclick = fn; return b; };
+  if (tool === 'walls') {
+    if (!sel || !sel.wall) { fix.append('Click a wall to move it (drag it) or change it. Drag across the plan to draw a new wall.'); return; }
+    const w = sel.wall;
+    fix.append(`Wall ${wallLen(w).toFixed(2)} m · drag it to move it.`,
+      btn('Outside wall', () => { w.t = 0.22; commitPlan(true); }, w.t >= 0.18),
+      btn('Inside wall', () => { w.t = 0.11; commitPlan(true); }, w.t < 0.18),
+      btn('Delete this wall', () => { view.plan.walls = view.plan.walls.filter(q => q !== w); view.plan.openings = (view.plan.openings || []).filter(o => o.wall !== w.id); sel = null; commitPlan(true); drawTop($('top')); drawFix(); }));
+    return;
+  }
+  const kinds = (value, fn) => { const s = el('select'); for (const [k, t] of Object.entries(KIND_NAMES)) { const o = el('option', { value: k }, t); if (k === value) o.selected = true; s.append(o); } s.onchange = () => fn(s.value); return s; };
+  if (!sel || !sel.op) {
+    fix.append('Click a door or window to change it (drag it along its wall to move it). Click a wall to add a', kinds(addKind, k => { addKind = k; }), 'there.');
+    return;
+  }
+  const o = sel.op;
+  const wd = el('input', { type: 'number', step: '0.05', min: '0.4', max: '6', value: (o.to - o.from).toFixed(2), style: 'width:70px', 'aria-label': 'Width in metres' });
+  wd.onchange = () => { const w = (view.plan.walls || []).find(q => q.id === o.wall), L = w ? wallLen(w) : o.to; const width = Math.max(0.4, Math.min(L, +wd.value || 0.9)), mid = (o.from + o.to) / 2, from = Math.max(0, Math.min(L - width, mid - width / 2)); o.from = +from.toFixed(3); o.to = +(from + width).toFixed(3); commitPlan(true); };
+  fix.append(kinds(o.kind, k => { o.kind = k; commitPlan(true); drawTop($('top')); drawFix(); }), 'width (m)', wd);
+  if (o.kind === 'door') fix.append(btn('Flip the swing', () => { o.flip = !o.flip; commitPlan(true); drawTop($('top')); }));
+  if (o.kind !== 'window') fix.append(btn(/front/i.test(o.name || '') ? 'The front door' : 'Make it the front door', () => {
+    for (const q of view.plan.openings) if (/front/i.test(q.name || '')) q.name = ''; o.name = 'front door';
+    const w = view.plan.walls.find(q => q.id === o.wall), L = wallLen(w), m = (o.from + o.to) / 2;
+    view.house.entrance = { x: +(w.a[0] + (w.b[0] - w.a[0]) / L * m).toFixed(2), y: +(w.a[1] + (w.b[1] - w.a[1]) / L * m).toFixed(2) };
+    saveNow({ entrance: view.house.entrance }); commitPlan(true);
+  }, /front/i.test(o.name || '')));
+  fix.append(btn('Delete', () => { view.plan.openings = view.plan.openings.filter(q => q !== o); sel = null; commitPlan(true); drawTop($('top')); drawFix(); }));
+}
+addEventListener('keydown', e => {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && sel && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) {
+    if (sel.wall) { view.plan.walls = view.plan.walls.filter(q => q !== sel.wall); view.plan.openings = (view.plan.openings || []).filter(o => o.wall !== sel.wall.id); }
+    else view.plan.openings = view.plan.openings.filter(q => q !== sel.op);
+    sel = null; commitPlan(true); drawTop($('top')); drawFix(); e.preventDefault();
+  }
+});
+
+function drawRooms(ul) {
+  ul.replaceChildren();
+  if (!rooms.length) ul.append(el('li', { class: 'hint' }, 'No rooms yet: drag a box over one on the plan.'));
+  rooms.forEach((r, i) => {
+    const li = el('li'); if (i === picked) li.classList.add('on');
+    const r1 = el('div', { class: 'r1' });
+    const name = el('input', { class: 'name', value: r.name, maxlength: '40', 'aria-label': 'Room name' });
+    name.oninput = () => { r.name = name.value; saveRooms(); drawTop($('top')); };
+    name.onfocus = () => { if (picked !== i) { picked = i; drawTop($('top')); } };
+    const up = el('button', { type: 'button', title: 'Earlier in the tour' }, '↑'); up.disabled = i === 0;
+    up.onclick = () => { [rooms[i - 1], rooms[i]] = [rooms[i], rooms[i - 1]]; picked = i - 1; saveRooms(); drawTop($('top')); drawRooms(ul); };
+    const dn = el('button', { type: 'button', title: 'Later in the tour' }, '↓'); dn.disabled = i === rooms.length - 1;
+    dn.onclick = () => { [rooms[i + 1], rooms[i]] = [rooms[i], rooms[i + 1]]; picked = i + 1; saveRooms(); drawTop($('top')); drawRooms(ul); };
+    const rm = el('button', { type: 'button', title: 'Remove this room' }, '×');
+    rm.onclick = () => { rooms.splice(i, 1); picked = -1; saveRooms(); drawTop($('top')); drawRooms(ul); };
+    r1.append(name, up, dn, rm);
+    const note = el('input', { value: r.note || '', maxlength: '200', placeholder: 'A line about it (optional)', 'aria-label': 'About this room' });
+    note.oninput = () => { r.note = note.value; saveRooms(); };
+    const w = r.x[1] - r.x[0], d = r.y[1] - r.y[0], off = r.area && Math.abs(w * d - r.area) > 0.25 * r.area;
+    const sz = el('small', off ? { class: 'off', title: 'More than a quarter off the size written on the plan: check this box and its walls' } : {},
+      `${w.toFixed(2)} × ${d.toFixed(2)} m · ${(w * d).toFixed(1)} m²` + (r.area ? ` · the plan says ${r.area} m²` : ''));
+    li.append(r1, note, sz);
+    ul.append(li);
+  });
+}
+
+let pending = null;
+function saveRooms() { pending = { ...(pending || {}), rooms }; clearTimeout(saveTimer); saveTimer = setTimeout(flush, 700); }
+async function flush() {
+  clearTimeout(saveTimer);
+  if (!pending) return;
+  const body = { action: 'save', id: current, ...pending }; pending = null;
+  try { const v = await call('/api/house', body); view.house = v.house; view.design = v.design; const sd = $('design'); if (sd) renderDesign(sd); } catch (err) { alertLine(err.message); }
+}
+async function saveNow(changes, redraw) {
+  await flush();
+  try { view = await call('/api/house', { action: 'save', id: current, ...changes }); if (redraw) { rooms = view.house.rooms.map(r => ({ ...r })); render(); } else alertLine('Saved.', true); }
+  catch (err) { alertLine(err.message); }
+}
+
+// ---- a house started from photos: upload, name, redesign (the designer above), mood board
+function renderPhotos(main) {
+  const h = view.house;
+  const s1 = el('section', { class: 'step', id: 's-model' });
+  const h1 = el('header'); const t1 = el('h3'); t1.append(el('span', {}, '1'), 'Your room photos'); h1.append(t1); s1.append(h1);
+  s1.append(el('p', { class: 'hint' }, 'One photo per room, taken from the doorway or a corner so most of the room shows. Each photo becomes a room, named from its file: change the name on its card below.'));
+  const pick = el('input', { type: 'file', multiple: '', accept: '.jpg,.jpeg,.png,.webp', hidden: '' });
+  pick.onchange = () => upload([...pick.files]);
+  const drop = el('div', { id: 'drop', tabindex: '0', role: 'button' }, 'Drop the photos here, or click to choose them');
+  drop.onclick = () => pick.click();
+  drop.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') pick.click(); };
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('hot'); };
+  drop.ondragleave = () => drop.classList.remove('hot');
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove('hot'); upload([...e.dataTransfer.files]); };
+  s1.append(drop, pick);
+  if ((h.rooms || []).length) s1.append(el('p', { class: 'facts' }, `${h.rooms.length} room${h.rooms.length > 1 ? 's' : ''}: ${h.rooms.map(r => r.name).join(', ')}`));
+  const tr = el('div', { class: 'row' });
+  const lt = el('label', {}, 'House name'); const it = el('input', { value: h.title, maxlength: '80', style: 'width:260px' }); it.onchange = () => saveNow({ title: it.value }); lt.append(it);
+  const lb = el('label', {}, 'Your name or business (on the mood board)'); const ib = el('input', { value: h.brand || '', maxlength: '60', placeholder: 'Optional', style: 'width:240px' }); ib.onchange = () => saveNow({ brand: ib.value }); lb.append(ib);
+  tr.append(lt, lb); s1.append(tr);
+  main.append(s1);
+  const sd = el('section', { class: 'step', id: 'design' });
+  main.append(sd); renderDesign(sd);
+  const s3 = el('section', { class: 'step', id: 's-export' });
+  const h3 = el('header'); const t3 = el('h3'); t3.append(el('span', {}, '3'), 'The mood board'); h3.append(t3); s3.append(h3);
+  const mrow = el('div', { class: 'row' });
+  const mb = el('button', { type: 'button', class: 'go' }, 'Make the mood board PDF');
+  const mo = el('button', { type: 'button' }, 'Open the PDF');
+  const of = el('button', { type: 'button' }, 'Open the house folder');
+  mo.disabled = !view.moodboard;
+  const mout = el('span', { class: 'facts' }, view.moodboard ? `Saved as ${view.moodboard}` : 'A cover with the house palette, then a page per room: your photo, the redesign, its palette and what is in it.');
+  mb.onclick = async () => {
+    mb.disabled = true; mout.textContent = 'Making the PDF…';
+    try { const r = await call('/api/house', { action: 'moodboard', id: current }); mout.textContent = `Saved in the house's folder: ${r.file} (${r.kb} KB).`; mo.disabled = false; view.moodboard = r.file; }
+    catch (err) { mout.textContent = ''; alertLine(err.message); }
+    mb.disabled = false;
+  };
+  mo.onclick = async () => { try { await call('/api/house', { action: 'open', id: current, what: 'moodboard' }); } catch (err) { alertLine(err.message); } };
+  of.onclick = async () => { try { await call('/api/house', { action: 'open', id: current, what: 'folder' }); } catch (err) { alertLine(err.message); } };
+  mrow.append(mb, mo, of, mout); s3.append(mrow);
+  main.append(s3);
+}
+
+// ---- the step bar at the top: where you are, and a jump to each step
+const steps = {
+  show(h) {
+    const nav = $('steps'); nav.replaceChildren();
+    const list = h.kind === 'photos'
+      ? [['s-model', 'Photos'], ['design', 'Style'], ['s-export', 'Mood board']]
+      : [['s-model', h.start === 'obj' ? 'Model' : 'Plan'], ['s-rooms', 'Rooms'], ['design', 'Style'], ['s-export', 'Walk through']];
+    list.forEach(([id, t], n) => {
+      const b = el('button', { type: 'button' }, `${n + 1} ${t}`);
+      b.onclick = () => { const s = $(id); if (s) s.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+      nav.append(b);
+    });
+  },
+};
+
+addEventListener('hashchange', () => { const id = decodeURIComponent(location.hash.slice(1)); if (id) open(id); });
+if (location.hash.length > 1) open(decodeURIComponent(location.hash.slice(1)));
+else location.replace('index.html');
+</script>
+</body>
+</html>

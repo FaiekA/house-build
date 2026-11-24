@@ -1,0 +1,6 @@
+{
+  "name": "house-plan-build-engine",
+  "private": true,
+  "description": "The walkthrough engine Designed Living fills with one house. Built in the cloud with ./build.sh; never needed on the PC.",
+  "dependencies": { "esbuild": "0.24.0", "gsap": "3.12.5", "lenis": "1.1.18", "three": "0.170.0" }
+}

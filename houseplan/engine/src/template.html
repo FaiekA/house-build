@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>House walkthrough</title>
+<style>
+  :root { --ink:#1d1b19; --muted:#6b655c; --paper:#f4f1ea; --accent:#e8622a; --mono: "SFMono-Regular", Menlo, Consolas, "Courier New", monospace; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--paper); color: var(--ink); font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  html.lenis, html.lenis body { height: auto; }
+  .lenis.lenis-smooth { scroll-behavior: auto !important; }
+  #scene { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  #track { position: relative; height: 3000vh; }
+  header { position: fixed; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; padding: 18px 28px; z-index: 5; pointer-events: none; }
+  .brand { font-weight: 800; letter-spacing: .2em; font-size: 13px; text-transform: uppercase; }
+  .brand span { color: var(--accent); }
+  .pill { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; border: 1px solid rgba(29,27,25,.35); border-radius: 999px; padding: 6px 12px; background: rgba(244,241,234,.6); }
+  #barwrap { position: fixed; left: 0; right: 0; top: 0; height: 2px; z-index: 6; }
+  #bar { height: 100%; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); }
+
+  /* the room's photo over the 3D at its stop (main.js showVeil) */
+  #veil { position: fixed; inset: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 2; opacity: 0; pointer-events: none; transform-origin: 50% 50%; }
+  #veil:not([src]) { display: none; }
+  body.veiled .room .mood img { display: none; }
+  .cap { position: fixed; z-index: 4; opacity: 0; transform: translateY(14px); transition: opacity .6s, transform .6s; pointer-events: none; }
+  .cap.on { opacity: 1; transform: none; pointer-events: auto; }
+
+  /* hero: the paper sheet */
+  .hero { left: 40px; top: 50%; transform: translateY(calc(-50% + 14px)); max-width: 380px; }
+  .hero.on { transform: translateY(-50%); }
+  .hero h1 { font-weight: 900; font-size: 54px; line-height: .98; letter-spacing: -.01em; margin: 0 0 18px; text-transform: uppercase; }
+  .hero h1 em { font-style: normal; color: var(--accent); }
+  .hero p { font-size: 15px; line-height: 1.55; color: var(--muted); margin: 0 0 22px; }
+  .titleblock { font-family: var(--mono); font-size: 11px; border: 1px solid var(--ink); display: grid; grid-template-columns: auto auto; width: max-content; }
+  .titleblock div { padding: 6px 10px; border-right: 1px solid var(--ink); border-bottom: 1px solid var(--ink); }
+  .titleblock div:nth-child(2n) { border-right: 0; }
+  .titleblock div:nth-last-child(-n+2) { border-bottom: 0; }
+  .titleblock b { display: block; font-size: 9px; color: var(--muted); font-weight: 400; letter-spacing: .1em; }
+
+  /* room cards: top-left label with corner marks */
+  .room { left: 40px; top: 84px; padding: 14px 18px 14px 22px; }
+  .room::before, .room::after { content: ""; position: absolute; width: 14px; height: 14px; border: 1.5px solid currentColor; }
+  .room::before { left: 0; top: 0; border-right: 0; border-bottom: 0; }
+  .room::after { left: 0; bottom: 0; border-right: 0; border-top: 0; }
+  .room small { display: block; font-family: var(--mono); font-size: 11px; letter-spacing: .14em; color: var(--accent); margin-bottom: 6px; }
+  .room h2 { margin: 0; font-weight: 900; text-transform: uppercase; font-size: 30px; line-height: 1; letter-spacing: .01em; }
+  .room p { margin: 10px 0 0; font-family: var(--mono); font-size: 12px; letter-spacing: .04em; max-width: 360px; line-height: 1.5; }
+  .room { color: var(--ink); text-shadow: 0 0 18px rgba(255,255,255,.9), 0 0 4px rgba(255,255,255,.8); }
+  /* the mood board: the designer's photo of the room and its palette */
+  .room .mood { margin-top: 14px; width: 270px; background: rgba(244,241,234,.94); padding: 8px; border-radius: 8px; box-shadow: 0 8px 30px rgba(40,30,20,.16); text-shadow: none; }
+  .mood img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; }
+  .swatches { display: flex; gap: 6px; margin-top: 8px; }
+  .swatches div { flex: 1; min-width: 0; font-family: var(--mono); font-size: 9px; letter-spacing: .03em; line-height: 1.2; color: var(--muted); overflow-wrap: anywhere; }
+  .swatches i { display: block; height: 22px; border-radius: 3px; margin-bottom: 4px; border: 1px solid rgba(0,0,0,.08); }
+
+  .end { left: 50%; bottom: 40px; transform: translate(-50%, 14px); text-align: center; background: rgba(244,241,234,.92); padding: 18px 24px; border-radius: 14px; box-shadow: 0 10px 40px rgba(40,30,20,.15); }
+  .end.on { transform: translate(-50%, 0); }
+  .end h2 { font-weight: 900; text-transform: uppercase; margin: 0 0 6px; font-size: 26px; }
+  .end p { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+  #restart { all: unset; cursor: pointer; display: inline-block; padding: 10px 18px; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 13px; }
+  .split { position: fixed; top: 84px; z-index: 4; font-family: var(--mono); font-size: 12px; letter-spacing: .2em; padding: 6px 12px; border-radius: 999px; opacity: 0; transition: opacity .6s; }
+  .split.l { left: 40px; background: var(--paper); border: 1px solid var(--ink); }
+  .split.r { right: 70px; background: var(--accent); color: #fff; }
+  body.compare .split { opacity: 1; }
+
+  .hint { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); font-family: var(--mono); font-size: 11px; letter-spacing: .2em; text-transform: uppercase; z-index: 4; transition: opacity .5s; }
+  .hint i { display: inline-block; animation: bob 1.6s ease-in-out infinite; font-style: normal; }
+  @keyframes bob { 50% { transform: translateY(4px); } }
+  body:not([data-step="0"]) .hint { opacity: 0; }
+
+  .dots { position: fixed; right: 24px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 4px; z-index: 5; }
+  .dots button { all: unset; cursor: pointer; display: flex; align-items: center; justify-content: flex-end; gap: 10px; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 3px 0; }
+  .dots button i { width: 14px; height: 1.5px; background: rgba(29,27,25,.35); transition: all .3s; flex: none; }
+  .dots button span { opacity: 0; transition: opacity .3s; white-space: nowrap; }
+  .dots:hover button span, .dots button.on span { opacity: 1; }
+  .dots button.on { color: var(--ink); }
+  .dots button.on i { background: var(--accent); width: 28px; }
+  footer { position: fixed; right: 24px; bottom: 16px; font-family: var(--mono); font-size: 10px; color: var(--muted); z-index: 3; }
+  #play { all: unset; cursor: pointer; position: fixed; right: 24px; bottom: 40px; z-index: 7; display: inline-flex; align-items: center; gap: 10px; padding: 12px 20px 12px 16px; border-radius: 999px; background: var(--accent); color: #fff; font-family: var(--mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; box-shadow: 0 8px 28px rgba(232,98,42,.35); transition: transform .2s, background .2s; }
+  #play:hover { transform: translateY(-2px); }
+  #play:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+  #play.playing { background: var(--ink); box-shadow: 0 8px 28px rgba(0,0,0,.25); }
+  #play .i-pause, #play.playing .i-play { display: none; }
+  #play.playing .i-pause { display: block; }
+  footer { bottom: 12px; }
+  #loading { position: fixed; inset: 0; display: grid; place-items: center; background: var(--paper); z-index: 20; font-family: var(--mono); font-size: 12px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); transition: opacity .6s; }
+  body.ready #loading { opacity: 0; pointer-events: none; }
+  @media (max-width: 700px) {
+    header { padding: 14px 16px; }
+    .pill, footer, .dots button span { display: none; }
+    .hero { left: 16px; right: 16px; top: auto; bottom: 64px; transform: translateY(14px); max-width: none; }
+    .hero.on { transform: none; }
+    .hero h1 { font-size: 34px; margin-bottom: 10px; }
+    .hero p { font-size: 14px; margin-bottom: 0; }
+    .room .mood { width: 150px; padding: 6px; }
+    .swatches span { display: none; }
+    .titleblock { display: none; }
+    .room { left: 16px; top: 100px; }
+    .room h2 { font-size: 24px; }
+    .end { left: 16px; right: 16px; bottom: 16px; transform: translateY(14px); }
+    .end.on { transform: none; }
+    .split { top: 104px; } .split.l { left: 16px; } .split.r { right: 16px; }
+    .dots { right: 8px; }
+    #play { right: 16px; bottom: auto; top: 52px; padding: 9px 14px 9px 12px; font-size: 11px; }
+  }
+</style>
+</head>
+<body data-step="0">
+<div id="loading">Drawing the plan…</div>
+<canvas id="scene"></canvas>
+<div id="barwrap"><div id="bar"></div></div>
+<header><div class="brand" id="brand"></div><div class="pill" id="pill"></div></header>
+
+<img id="veil" alt="">
+<div id="caps"></div>
+<div class="split l">PLAN</div><div class="split r">BUILT</div>
+<button id="play" aria-label="Play the tour"><svg class="i-play" viewBox="0 0 16 16" width="14" height="14"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg><svg class="i-pause" viewBox="0 0 16 16" width="14" height="14"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z" fill="currentColor"/></svg><span>Play tour</span></button>
+<div class="hint">Scroll to walk in <i>↓</i></div>
+
+<nav class="dots" id="dots"></nav>
+<footer>Textures: Poly Haven (CC0) · three.js · Made with House Plan Build</footer>
+<div id="track"></div>
+<script id="house-data" type="application/json">/*__HOUSE_JSON__*/</script>
+<script>try { document.getElementById('brand').textContent = JSON.parse(document.getElementById('house-data').textContent).brand || ''; } catch (e) {}</script>
+<script>/*__BUNDLE__*/</script>
+</body>
+</html>
