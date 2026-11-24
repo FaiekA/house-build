@@ -27,6 +27,7 @@ PRO_FALLBACK = "gemini-3-pro-image-preview"          # Nano Banana Pro
 READ_MODEL = "gemini-flash-latest"                   # reads the photo back (config `house_read_model` overrides)
 PHOTO_TIMEOUT_S = 90
 READ_TIMEOUT_S = 40
+CUT_TIMEOUT_S = 60
 MAX_PHOTO_BYTES = 12 * 1024 * 1024
 COST_FLASH_C, COST_PRO_C = 4, 13                     # cents a photo, about (shown on the page before you press)
 USES = ("walls", "floor", "wood", "fabric", "metal", "stone", "accent")
@@ -1038,6 +1039,92 @@ def clean_read(text):
             "floor": {"material": floor.get("material") if floor.get("material") in FLOORS else "wood",
                       "hex": floor["hex"].lower()} if HEX.match(str(floor.get("hex") or "")) else None,
             "walls": walls if HEX.match(walls) else None, "items": items[:MAX_ITEMS]}
+
+
+# ---- the furniture cut out of the room's photo (Faiek, 2026-11-24: "use images instead of the 3D boxes"). Gemini
+# marks each piece in the designed photo with its box and an outline (a mask); the walkthrough stands that cut-out
+# picture in the room where the piece is placed. Boxes only (no mask) still work: the page feathers the edges.
+CUT_MODEL = "gemini-2.5-flash"           # segmentation masks (config `house_cutout_model` overrides)
+CUT_KINDS = tuple(k for k in KINDS if k not in ("rug", "pendant", "shower") + RUN_KINDS)
+MAX_CUTS = 24
+MAX_MASK_BYTES = 400 * 1024
+CUT_PROMPT = ("Give the segmentation masks for each piece of furniture, each plant, each floor lamp and each framed "
+              "picture in this room photo. Output a JSON list of segmentation masks where each entry contains the 2D "
+              "bounding box in the key \"box_2d\", the segmentation mask in the key \"mask\", and the text label in "
+              "the key \"label\". Use only these labels: " + ", ".join(CUT_KINDS) + ". One entry per piece (six "
+              "chairs = six entries). Leave out anything cut off by the edge of the photo.")
+
+
+def clean_cuts(text):
+    """Gemini's answer -> [{kind, box: [ymin, xmin, ymax, xmax] in 0-1000, mask: PNG data URL or None}]."""
+    text = str(text or "").strip()
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text).strip()
+    try:
+        raw = json.loads(text)
+    except ValueError:
+        start, end = text.find("["), text.rfind("]")
+        try:
+            raw = json.loads(text[start:end + 1]) if start >= 0 < end else []
+        except ValueError:
+            raw = []
+    if isinstance(raw, dict):
+        raw = raw.get("items") or raw.get("masks") or []
+    out = []
+    for it in raw if isinstance(raw, list) else []:
+        if not isinstance(it, dict):
+            continue
+        kind = str(it.get("label") or it.get("kind") or "").strip().lower().replace(" ", "_")
+        box = it.get("box_2d") or it.get("box")
+        if kind not in CUT_KINDS or not isinstance(box, list) or len(box) != 4:
+            continue
+        try:
+            y0, x0, y1, x1 = (max(0, min(1000, int(round(float(v))))) for v in box)
+        except (TypeError, ValueError):
+            continue
+        if y1 - y0 < 15 or x1 - x0 < 15:
+            continue
+        mask = it.get("mask")
+        if isinstance(mask, str) and mask.startswith("data:image/png;base64,") and len(mask) < MAX_MASK_BYTES * 4 // 3:
+            try:
+                ok = base64.b64decode(mask.split(",", 1)[1], validate=True)[:8] == b"\x89PNG\r\n\x1a\n"
+            except ValueError:
+                ok = False
+            mask = mask if ok else None
+        else:
+            mask = None
+        out.append({"kind": kind, "box": [y0, x0, y1, x1], "mask": mask})
+    return out[:MAX_CUTS]
+
+
+def cut_photo(data, ext, key, model=None, record=None, opener=None):
+    """The pieces in a room photo, each with its box and mask, for the walkthrough's cut-outs. One cheap call.
+    The mask model (2.5 Flash, thinking off) first; if Google no longer has it, the read model gives boxes only."""
+    if not key:
+        raise DesignError("Cutting out the furniture needs your Gemini key (Settings).")
+    mime = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}.get(ext, "image/png")
+    parts = [{"inline_data": {"mime_type": mime, "data": base64.b64encode(data).decode("ascii")}},
+             {"text": CUT_PROMPT}]
+    tries = [(model or CUT_MODEL, {"temperature": 0.3, "thinkingConfig": {"thinkingBudget": 0}})]
+    if not model:
+        tries.append((READ_MODEL, {"temperature": 0.3}))
+    error = None
+    for name, config in tries:
+        try:
+            reply = _post(f"{GEMINI_API}/v1beta/models/{urllib.parse.quote(name, safe='')}:generateContent",
+                          {"contents": [{"parts": parts}], "generationConfig": config}, key, CUT_TIMEOUT_S, opener)
+        except DesignError as exc:
+            error = exc
+            continue
+        if record:
+            record(reply.get("modelVersion") or name, reply.get("usageMetadata"))
+        text = "".join(p.get("text", "") for c in reply.get("candidates") or []
+                       for p in (c.get("content") or {}).get("parts") or [])
+        cuts = clean_cuts(text)
+        if cuts:
+            return cuts
+    if error:
+        raise error
+    return []
 
 
 def kinds_from_read(room, read):
@@ -2159,6 +2246,25 @@ def selftest():
     data, ext = make_photo("x", "k", "gemini-2.5-flash-image", lambda m, u: seen.append(m),
                            opener=lambda req, timeout: Fake(reply))
     check(data == png and ext == "png" and seen == ["gemini-2.5-flash-image"], "make_photo with a stand-in")
+    # the cut-outs: the mask model gone (404), the read model's boxes still used
+    asked = []
+
+    def cutter(req, timeout):
+        model = urllib.parse.unquote(req.full_url.split("/models/")[1].split(":")[0])
+        asked.append(model)
+        if model == CUT_MODEL:
+            raise urllib.error.HTTPError(req.full_url, 404, "gone", {}, None)
+        text = "```json\n" + json.dumps([{"box_2d": [500, 100, 900, 700], "label": "Dining chair"},
+                                          {"box_2d": [0, 0, 1000, 1000], "label": "car"}]) + "\n```"
+        return Fake(json.dumps({"candidates": [{"content": {"parts": [{"text": text}]}}]}).encode())
+    cuts = cut_photo(png, "png", "k", opener=cutter)
+    check(asked == [CUT_MODEL, READ_MODEL] and cuts == [{"kind": "dining_chair", "box": [500, 100, 900, 700],
+                                                         "mask": None}], f"cut_photo falls back to boxes ({cuts})")
+    mask = "data:image/png;base64," + base64.b64encode(png).decode()
+    check(clean_cuts(json.dumps({"items": [{"box_2d": [10, 10, 500, 400], "label": "plant", "mask": mask},
+                                           {"box_2d": [10, 10, 500, 400], "label": "sofa", "mask": "data:image/png;base64,AAAA"}]}))
+          == [{"kind": "plant", "box": [10, 10, 500, 400], "mask": mask},
+              {"kind": "sofa", "box": [10, 10, 500, 400], "mask": None}], "clean_cuts keeps only real PNG masks")
     return fails
 
 
