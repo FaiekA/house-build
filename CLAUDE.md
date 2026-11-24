@@ -23,5 +23,9 @@ installed at `C:\DesignedLiving` on Faiek's PCs.
   boxes + masks, kept in `design/<room>.cuts.json`; `houseplan/engine/src/cutouts.js` turns them into upright cards
   that face you). Drawn blocks only where a room has no photo or a piece has no cut-out. `/api/gallery` lists every
   designed photo; the launch screen, start page and style cards show those real pictures.
+- The white model (plan and model houses): `/api/preview?snap=1` draws the walkthrough in plain white with its furniture
+  and photographs each room from its tour stop (`SHOTS` in main.js); the editor saves each as `snaps/<room>.jpg` with
+  its camera (`view`). The design run then makes that room's photo from its snapshot (`housedesign.snapshot_prompt` +
+  `restyle_photo`) and the tour stops at that camera. A snapshot counts only while `houseplan.shape_key` matches.
 - Every Claude or Gemini call records its usage. Claude is called over raw HTTPS with streaming (no SDK).
 - `py app.py --selftest` must pass before calling a change done; it makes no model calls.

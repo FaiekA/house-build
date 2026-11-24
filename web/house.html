@@ -204,7 +204,7 @@ function renderDesign(sd) {
   const sl = el('a', { class: 'btn', href: 'styles.html#' + encodeURIComponent(current) }, 'See all 14 styles');
   hd.append(t, sl); sd.append(hd);
   if (photos) sd.append(el('p', { class: 'hint' }, 'Gemini (Nano Banana) redesigns each of your photos in the style you pick, the way an interior designer would: the same walls, windows and camera angle, with new furniture, colours, floors, rugs and light. A room can have its own style (a spa bathroom, a playful kids\' room): pick it on the room\'s card first.'));
-  else sd.append(el('p', { class: 'hint' }, 'Pick a style and Gemini (Nano Banana) photograph each room as an interior designer would, in one house palette. A room can have its own style (a spa bathroom, a playful kids\' room): pick it on the room\'s card before you design it. Each photo becomes a mood board on that room\'s card, and its colours and furniture are put into the 3D house. Then the layout is checked: walking routes between doors, kitchen work triangle, bathroom clearances.'));
+  else sd.append(el('p', { class: 'hint' }, 'Take the white model snapshots first (free): the house is drawn in plain white with its furniture, and each room is photographed from where the walkthrough stops in it. Then pick a style and Gemini (Nano Banana) designs each room from its snapshot, in one house palette: the same walls, windows, doors and camera angle as the 3D, with the furniture and styling free to change. A room without a snapshot is designed from a description. A room can have its own style (a spa bathroom, a playful kids\' room): pick it on the room\'s card before you design it. Each photo becomes a mood board on that room\'s card, and its colours and furniture are put into the 3D house. Then the layout is checked: walking routes between doors, kitchen work triangle, bathroom clearances.'));
   const list_ = photos ? (h.rooms || []) : rooms;
   if (!list_.length) { sd.append(el('p', { class: 'facts' }, photos ? 'Upload a photo of each room first.' : 'Name the rooms first.')); return; }
   const row = el('div', { class: 'row' });
@@ -232,6 +232,10 @@ function renderDesign(sd) {
   const go = el('div', { class: 'row' });
   const all = el('button', { type: 'button', class: 'go' }, `${photos ? 'Redesign' : 'Design'} every room (Flash, about ${list_.length * d.cost.flash}c)`);
   const again = el('button', { type: 'button', title: 'Free: no model call' }, 'Place the furniture again');
+  const snapped = list_.filter(r => ((d.rooms || {})[r.name] || {}).snap).length;
+  const snapBtn = el('button', { type: 'button', title: 'Free: the house drawn in plain white, one snapshot per room. Each room is then designed from its snapshot.' }, snapped ? `Take the white model snapshots again (${snapped} of ${list_.length} taken)` : 'Take white model snapshots (free)');
+  snapBtn.hidden = photos; snapBtn.disabled = !!(work && work.running);
+  snapBtn.onclick = () => snapAll(snapBtn);
   const state = el('span', { class: 'facts' });
   all.disabled = again.disabled = !!(work && work.running);
   all.onclick = () => design(null, false);
@@ -244,7 +248,7 @@ function renderDesign(sd) {
   if (work && work.running) state.textContent = work.model === 'cut' ? `Cutting out the furniture in ${work.room} (${work.done + 1} of ${work.total})…` : `Designing ${work.room} (${work.done + 1} of ${work.total}, ${work.model === 'pro' ? 'Pro' : 'Flash'})…`;
   else if (work && work.errors && work.errors.length) state.textContent = work.errors.join(' · ');
   if (photos) again.hidden = true;
-  go.append(all, again, cutBtn, state); sd.append(go);
+  go.append(snapBtn, all, again, cutBtn, state); sd.append(go);
   const grid = el('div', { class: 'designs' });
   for (const r of list_) {
     const rd = (d.rooms || {})[r.name] || {};
@@ -260,6 +264,14 @@ function renderDesign(sd) {
       const nm = el('input', { value: r.name, maxlength: '40', 'aria-label': 'Room name' });
       nm.onchange = () => saveNow({ names: { [r.source]: nm.value } }, true);
       c.append(nm);
+    } else if (rd.snap) {                      // the white model's snapshot beside the photo designed from it
+      const pair = el('div', { class: 'pair' });
+      const before = el('figure'); before.append(el('img', { src: `/api/photo?which=snap&id=${encodeURIComponent(current)}&room=${encodeURIComponent(r.name)}&t=${encodeURIComponent(rd.snapped)}`, alt: `${r.name}, white model` }), el('figcaption', {}, 'White model'));
+      const after = el('figure');
+      if (rd.photo) after.append(el('img', { src: `/api/photo?id=${encodeURIComponent(current)}&room=${encodeURIComponent(r.name)}&t=${encodeURIComponent(rd.made)}`, alt: `${r.name}, as designed` }));
+      else after.append(el('div', { class: 'ph' }, 'Not designed yet'));
+      after.append(el('figcaption', {}, 'Designed'));
+      pair.append(before, after); c.append(pair);
     } else if (rd.photo) c.append(el('img', { src: `/api/photo?id=${encodeURIComponent(current)}&room=${encodeURIComponent(r.name)}&t=${encodeURIComponent(rd.made)}`, alt: `${r.name}, as designed` }));
     else c.append(el('div', { class: 'ph' }, 'No photo yet'));
     if (!photos) c.append(el('b', {}, r.name));
@@ -285,6 +297,35 @@ function renderDesign(sd) {
   sd.append(grid);
   clearTimeout(pollTimer);
   if (work && work.running) pollTimer = setTimeout(pollDesign, 2500);
+}
+// ---- the white model (Faiek, 2026-11-24): the walkthrough drawn in plain white, off screen, in its own sandboxed
+// frame; it photographs each room from its stop in the tour and posts the snapshots here; they are saved one by one
+function takeSnaps() {
+  return new Promise((resolve, reject) => {
+    const f = el('iframe', { title: 'White model', sandbox: 'allow-scripts', 'aria-hidden': 'true', tabindex: '-1' });
+    f.style.cssText = 'position:fixed;left:-12000px;top:0;width:1024px;height:768px;border:0';
+    const done = (err, shots) => { removeEventListener('message', onMsg); clearTimeout(timer); f.remove(); if (err) reject(err); else resolve(shots); };
+    const onMsg = e => { if (e.source === f.contentWindow && e.data && e.data.designedLiving === 'snaps') done(null, e.data.shots); };
+    const timer = setTimeout(() => done(new Error('The white model took too long to draw. Try again.')), 120000);
+    addEventListener('message', onMsg);
+    f.src = '/api/preview?snap=1&id=' + encodeURIComponent(current) + '&t=' + Date.now();
+    document.body.append(f);
+  });
+}
+async function snapAll(btn) {
+  await flush();
+  if (btn) btn.disabled = true;
+  alertLine('Drawing the house in plain white and taking a snapshot of each room…', true);
+  try {
+    const check = await fetch('/api/preview?snap=1&id=' + encodeURIComponent(current));   // says why, if it can't be drawn
+    if (!check.ok) { const j = await check.json().catch(() => ({})); throw new Error(j.error || `Error ${check.status}`); }
+    const shots = await takeSnaps();
+    if (!Array.isArray(shots) || !shots.length) throw new Error('No snapshots came back. Name the rooms first.');
+    for (const s of shots) await call('/api/house', { action: 'snapshot', id: current, room: String(s.room), image: String(s.image), view: s.view });
+    const v = await call('/api/house?id=' + encodeURIComponent(current)); view.design = v.design; view.house = v.house; view.work = v.work;
+    const sd = $('design'); if (sd) renderDesign(sd);
+    alertLine(`White model snapshots taken for ${shots.length} room${shots.length === 1 ? '' : 's'}. Design the rooms and each photo will keep its room's walls, windows, doors and camera angle.`, true);
+  } catch (err) { alertLine(err.message); if (btn) btn.disabled = false; }
 }
 async function pollDesign() {
   try { const v = await call('/api/house?id=' + encodeURIComponent(current)); view.design = v.design; view.work = v.work; const sd = $('design'); if (sd) renderDesign(sd); if (v.work && !v.work.running) { view.house = v.house; alertLine(v.work.errors && v.work.errors.length ? 'Some rooms were not designed: see their cards.' : view.house.kind === 'photos' ? 'Rooms redesigned. Make the mood board when you like them.' : 'Rooms designed. Walk through the house to see them.', !(v.work.errors && v.work.errors.length)); } }
