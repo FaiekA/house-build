@@ -10,104 +10,114 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="app.css">
 <style>
-  /* ---- the launch screen: a room turns in 3D while its walls rise, mood boards drift round it */
-  #launch { position: fixed; inset: 0; z-index: 50; overflow: hidden; cursor: pointer;
-    background: radial-gradient(ellipse at 50% 45%, #2a241d 0%, #12110f 62%); perspective: 1600px;
+  /* ---- the launch screen: your own designed rooms drift past as a wall of photos (a plan draws itself while there
+     are none yet). No drawn boxes (Faiek, 2026-11-24: "use images instead of 3D boxes"). */
+  #launch { position: fixed; inset: 0; z-index: 50; overflow: hidden; cursor: pointer; background: #0a0908;
     transition: opacity .9s ease, transform 1.1s cubic-bezier(.6, 0, .2, 1); transform-origin: 50% 60%; }
-  #launch.away { opacity: 0; transform: translateZ(380px) rotateX(18deg); pointer-events: none; }
-  .stage { position: absolute; inset: 0; perspective: 1600px; perspective-origin: 50% 32%; }
-  .room { position: absolute; left: 50%; top: 44%; width: 560px; height: 400px; margin: -200px 0 0 -280px;
-    transform-style: preserve-3d; animation: turn 26s linear infinite; }
-  @keyframes turn { from { transform: rotateX(62deg) rotateZ(-20deg); } to { transform: rotateX(62deg) rotateZ(340deg); } }
-  .floor { position: absolute; inset: 0; background: repeating-linear-gradient(90deg, #8a6a4c 0 46px, #7d6045 46px 47px);
-    box-shadow: 0 0 140px rgba(209, 169, 101, .28); }
-  .rug { position: absolute; left: 150px; top: 120px; width: 250px; height: 160px; background: #d9cfbf; border-radius: 4px; transform: translateZ(1px); }
-  .wall { position: absolute; opacity: .95; }
-  .w1 { left: 0; top: -180px; width: 560px; height: 180px; transform-origin: bottom; background: linear-gradient(#efe7da, #e2d6c4);
-    animation: rise1 2.4s cubic-bezier(.2, .7, .2, 1) both; }
-  .w2 { left: -180px; top: 0; width: 180px; height: 400px; transform-origin: right; background: linear-gradient(90deg, #d8cab4, #efe7da);
-    animation: rise2 2.4s .3s cubic-bezier(.2, .7, .2, 1) both; }
-  .window { position: absolute; left: 300px; top: 40px; width: 150px; height: 96px; background: linear-gradient(#a9c2c9, #d6e2e2); border: 6px solid #3a2f26; }
-  @keyframes rise1 { from { transform: rotateX(0deg); opacity: 0; } to { transform: rotateX(-90deg); opacity: .95; } }
-  @keyframes rise2 { from { transform: rotateY(0deg); opacity: 0; } to { transform: rotateY(90deg); opacity: .95; } }
-  .piece { position: absolute; transform-style: preserve-3d; animation: drop 1.2s cubic-bezier(.2, .8, .3, 1.2) both; }
-  .sofa { left: 170px; top: 300px; width: 220px; height: 70px; background: #5b4332; --z: 36px; animation-delay: 1.4s; }
-  .table { left: 220px; top: 170px; width: 120px; height: 70px; background: #2a2826; border-radius: 3px; --z: 22px; animation-delay: 1.7s; }
-  .plant { left: 470px; top: 40px; width: 46px; height: 46px; border-radius: 50%; background: #7d8466; --z: 60px; animation-delay: 2s; }
-  .lamp { left: 60px; top: 300px; width: 34px; height: 34px; border-radius: 50%; background: #d1a965; --z: 90px; animation-delay: 2.2s;
-    box-shadow: 0 0 40px 10px rgba(232, 201, 140, .5); }
-  @keyframes drop { from { transform: translateZ(260px); opacity: 0; } to { transform: translateZ(var(--z)); opacity: 1; } }
-  .card { position: absolute; width: 160px; padding: 10px; background: rgba(28, 26, 23, .86); border: 1px solid var(--line);
-    border-radius: 12px; backdrop-filter: blur(6px); animation: float 7s ease-in-out infinite, cardin 1.2s ease both; }
-  .card .sw { display: flex; align-items: stretch; gap: 0; height: 34px; border-radius: 6px; overflow: hidden; }
-  .card .sw span { flex: 1; }
-  .card p { font-size: 12px; margin: 8px 0 0; color: #cfc4b2; }
-  @keyframes float { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-14px) rotate(1deg); } }
-  @keyframes cardin { from { opacity: 0; } to { opacity: 1; } }
+  #launch.away { opacity: 0; transform: scale(1.08); pointer-events: none; }
+  .mosaic { position: absolute; inset: -20% -10%; display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px;
+    transform: rotate(-8deg) scale(1.05); opacity: 0; transition: opacity 1.4s ease; }
+  #launch.has-photos .mosaic { opacity: .55; }
+  .mosaic .col { display: flex; flex-direction: column; gap: 18px; animation: drift 38s linear infinite; }
+  .mosaic .col:nth-child(2n) { animation-direction: reverse; animation-duration: 46s; }
+  .mosaic img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 16px; display: block; box-shadow: 0 20px 50px -20px #000; }
+  @keyframes drift { from { transform: translateY(0); } to { transform: translateY(-50%); } }
+  .veil { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 62%, rgba(10, 9, 8, .25), rgba(10, 9, 8, .92) 70%),
+    linear-gradient(180deg, rgba(10, 9, 8, .6), transparent 30%, transparent 55%, rgba(10, 9, 8, .95)); }
+  .blueprint { position: absolute; left: 50%; top: 40%; width: min(620px, 80vw); transform: translate(-50%, -50%); overflow: visible;
+    filter: drop-shadow(0 0 18px rgba(212, 171, 102, .35)); transition: opacity .8s; }
+  #launch.has-photos .blueprint { opacity: 0; }
+  .blueprint path, .blueprint rect { fill: none; stroke: var(--brass); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 1600; stroke-dashoffset: 1600; animation: drawn 2.6s cubic-bezier(.4, 0, .2, 1) forwards; }
+  .blueprint .thin { stroke-width: 1.4; stroke: rgba(236, 202, 142, .55); animation-delay: .9s; }
+  .blueprint .grid { stroke: rgba(242, 235, 223, .05); stroke-width: 1; stroke-dasharray: none; stroke-dashoffset: 0; animation: none; }
+  .blueprint text { fill: rgba(242, 235, 223, .55); font: 600 11px var(--font); letter-spacing: .3em; opacity: 0; animation: fadein 1s 1.8s forwards; }
+  @keyframes drawn { to { stroke-dashoffset: 0; } }
+  @keyframes fadein { to { opacity: 1; } }
   .title { position: absolute; left: 16px; right: 16px; bottom: 11vh; display: flex; flex-direction: column; align-items: center;
-    gap: 14px; text-align: center; animation: titlein 1.6s .8s ease both; }
+    gap: 14px; text-align: center; animation: titlein 1.6s .5s ease both; }
   @keyframes titlein { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
-  .kicker { font-size: 13px; letter-spacing: .32em; text-transform: uppercase; color: var(--brass); }
-  .title h1 { margin: 0; font-weight: 300; font-size: clamp(54px, 9vw, 104px); line-height: 1; }
+  .kicker { font-size: 12.5px; letter-spacing: .34em; text-transform: uppercase; color: var(--brass); }
+  .title h1 { margin: 0; font-weight: 300; font-size: clamp(54px, 9vw, 112px); line-height: 1; text-shadow: 0 10px 40px rgba(0, 0, 0, .6); }
+  .title h1 em { color: var(--brass-2); }
   .title p { margin: 0; color: var(--ink-dim); font-size: 18px; max-width: 560px; }
   .load { width: 240px; height: 2px; background: var(--line); margin-top: 16px; border-radius: 2px; overflow: hidden; }
-  .load i { display: block; height: 2px; background: var(--brass); animation: load 3.2s 1s ease-in-out both; }
+  .load i { display: block; height: 2px; background: linear-gradient(90deg, var(--brass-3), var(--brass-2)); box-shadow: 0 0 12px var(--brass); animation: load 3.2s .8s ease-in-out both; }
   @keyframes load { from { width: 0; } to { width: 100%; } }
   .skip { position: absolute; right: 24px; bottom: 20px; font-size: 13px; color: var(--ink-faint); }
-  @media (max-width: 700px) { .room { transform: scale(.6); } .card { display: none; } }
-  @media (prefers-reduced-motion: reduce) { .room, .card, .load i { animation: none !important; } .w1, .w2, .piece { animation-duration: .01s !important; animation-delay: 0s !important; } }
+  @media (max-width: 700px) { .mosaic { grid-template-columns: repeat(2, 1fr); } }
+  @media (prefers-reduced-motion: reduce) { .mosaic .col, .load i { animation: none !important; } .blueprint path, .blueprint rect { animation-duration: .01s !important; } }
 
   /* ---- the start page */
   #start { opacity: 0; transform: translateY(24px) scale(.98); transition: opacity .9s .2s ease, transform 1s .2s cubic-bezier(.2, .7, .2, 1); }
   #start.in { opacity: 1; transform: none; }
-  .layout { display: flex; flex-wrap: wrap; gap: 40px; max-width: 1360px; margin: 0 auto; padding: 44px 32px 80px; }
-  .main { flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 26px; }
-  .main h1 { margin: 0; font-weight: 300; font-size: clamp(36px, 5vw, 54px); line-height: 1.08; }
-  .sub { margin: 10px 0 0; color: var(--ink-dim); font-size: 17px; }
+  .layout { display: flex; flex-wrap: wrap; gap: 44px; max-width: 1360px; margin: 0 auto; padding: 48px 32px 40px; }
+  .main { flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 28px; }
+  .eyebrow { font-size: 12px; letter-spacing: .28em; text-transform: uppercase; color: var(--brass); margin: 0 0 12px; }
+  .main h1 { margin: 0; font-weight: 300; font-size: clamp(38px, 5vw, 60px); line-height: 1.04; }
+  .main h1 em { color: var(--brass-2); }
+  .sub { margin: 12px 0 0; color: var(--ink-dim); font-size: 17px; max-width: 720px; }
   .sources { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; }
-  .src { text-align: left; display: block; padding: 18px; border-radius: 18px; background: var(--panel); border: 1.5px solid var(--line);
-    color: var(--ink); transition: transform .25s ease, border-color .25s ease; min-height: 0; }
-  .src:hover { transform: translateY(-4px); border-color: var(--line-2); }
-  .src[aria-pressed=true] { border-color: var(--brass); }
-  .src .pic { height: 140px; border-radius: 12px; background: #1f1c18; display: grid; place-items: center; color: var(--brass); margin-bottom: 16px; }
-  .src b { display: block; font-family: var(--serif); font-size: 25px; font-weight: 400; }
+  .src { position: relative; text-align: left; display: block; padding: 16px 16px 20px; border-radius: 20px; color: var(--ink); min-height: 0; overflow: hidden;
+    background: linear-gradient(180deg, rgba(34, 30, 26, .95), rgba(20, 18, 16, .95)); border: 1px solid var(--line); box-shadow: var(--shadow);
+    transition: transform .3s cubic-bezier(.2, .7, .2, 1), border-color .3s, box-shadow .3s; }
+  .src { display: flex; flex-direction: column; justify-content: flex-start; align-items: stretch; }
+  .src > * { flex: none; }
+  .src:hover:not(:disabled) { transform: translateY(-4px); border-color: var(--line-2); background: linear-gradient(180deg, rgba(38, 34, 29, .95), rgba(22, 20, 17, .95)); }
+  .src[aria-pressed=true] { border-color: rgba(212, 171, 102, .7); box-shadow: 0 0 0 1px rgba(212, 171, 102, .35), 0 20px 50px -24px var(--brass-glow), var(--shadow); }
+  .src[aria-pressed=true]::after { content: "✓"; position: absolute; top: 14px; right: 14px; width: 24px; height: 24px; border-radius: 999px; display: grid; place-items: center;
+    background: var(--brass); color: #1a140b; font-size: 13px; font-weight: 700; }
+  .src .pic { height: 140px; border-radius: 14px; display: grid; place-items: center; color: var(--brass); margin-bottom: 18px; background-size: cover; background-position: center;
+    background-color: #15120f; background-image: radial-gradient(circle at 50% 60%, rgba(212, 171, 102, .18), transparent 60%), repeating-linear-gradient(0deg, rgba(242, 235, 223, .035) 0 1px, transparent 1px 22px), repeating-linear-gradient(90deg, rgba(242, 235, 223, .035) 0 1px, transparent 1px 22px);
+    border: 1px solid var(--line); }
+  .src b { display: block; font-family: var(--serif); font-size: 25px; font-weight: 400; letter-spacing: -.01em; }
   .src span { display: block; color: var(--ink-dim); font-size: 14.5px; margin-top: 6px; font-weight: 400; }
-  .src em { display: block; color: var(--brass); font-size: 13px; margin-top: 12px; font-style: normal; font-weight: 400; }
-  .go-box { border: 1.5px dashed rgba(209, 169, 101, .45); border-radius: 18px; padding: 24px; background: rgba(209, 169, 101, .04);
-    display: grid; gap: 14px; }
-  .go-box.hot { border-color: var(--brass); background: rgba(209, 169, 101, .09); }
-  .go-box h2 { margin: 0; font-size: 24px; font-weight: 400; }
+  .src em { align-self: flex-start; display: inline-block; color: var(--brass-2); font-size: 12.5px; margin-top: 14px; font-style: normal; font-weight: 500; padding: 3px 10px; border-radius: 999px; background: rgba(212, 171, 102, .1); border: 1px solid rgba(212, 171, 102, .22); }
+  .go-box { border: 1.5px dashed rgba(212, 171, 102, .4); border-radius: 20px; padding: 26px; display: grid; gap: 14px;
+    background: radial-gradient(600px 160px at 30% 0%, rgba(212, 171, 102, .08), transparent 70%), rgba(0, 0, 0, .2); transition: border-color .2s, background .2s; }
+  .go-box.hot { border-color: var(--brass); background: radial-gradient(600px 200px at 30% 0%, rgba(212, 171, 102, .16), transparent 70%), rgba(0, 0, 0, .2); }
+  .go-box h2 { margin: 0; font-size: 26px; font-weight: 400; }
   .go-box .row label { flex: 1 1 260px; }
-  .go-box input[type=text] { width: 100%; }
+  .go-box input[type=text] { width: 100%; font-size: 15px; padding: 12px 14px; }
   #chosen { font-size: 13.5px; color: var(--ink-dim); }
   aside { flex: 1 1 320px; display: flex; flex-direction: column; gap: 12px; }
-  aside h2 { margin: 0; font-family: var(--font); font-size: 13px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; }
-  .house { display: flex; gap: 14px; padding: 14px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); text-decoration: none; color: var(--ink); }
-  .house:hover { border-color: var(--brass); color: var(--ink); }
-  .house .thumb { width: 60px; height: 60px; border-radius: 10px; overflow: hidden; display: grid; grid-template-columns: 1fr 1fr; flex: none; }
+  aside h2, .recent h2 { margin: 0; font-family: var(--font); font-size: 12px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; }
+  .house { display: flex; gap: 14px; align-items: center; padding: 12px; border-radius: 16px; text-decoration: none; color: var(--ink);
+    background: linear-gradient(180deg, rgba(31, 28, 24, .9), rgba(21, 19, 17, .9)); border: 1px solid var(--line); transition: border-color .2s, transform .2s; }
+  .house:hover { border-color: rgba(212, 171, 102, .55); color: var(--ink); transform: translateX(3px); }
+  .house .thumb { width: 72px; height: 72px; border-radius: 12px; overflow: hidden; display: grid; grid-template-columns: 1fr 1fr; flex: none; box-shadow: 0 0 0 1px var(--line-2); }
+  .house .thumb img { grid-column: 1 / -1; grid-row: 1 / -1; width: 100%; height: 100%; object-fit: cover; }
   .house b { font-weight: 500; display: block; }
   .house small { color: var(--ink-dim); font-size: 13px; display: block; }
-  .house em { color: var(--brass); font-size: 13px; font-style: normal; }
-  .note { padding: 16px; border-radius: 14px; border: 1px solid var(--line); color: var(--ink-dim); font-size: 13px; }
-  .note code { color: var(--ink); font-family: inherit; }
-  @media (max-width: 640px) { .layout { padding: 24px 16px 60px; gap: 28px; } }
+  .house em { color: var(--brass); font-size: 12.5px; font-style: normal; }
+  .note { padding: 16px; border-radius: 16px; border: 1px solid var(--line); color: var(--ink-dim); font-size: 13px; background: rgba(0, 0, 0, .18); }
+  .note code { overflow-wrap: anywhere; }
+  .recent { max-width: 1360px; margin: 0 auto; padding: 8px 32px 80px; display: grid; gap: 16px; }
+  .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+  .shot { position: relative; display: block; border-radius: 18px; overflow: hidden; aspect-ratio: 4 / 3; text-decoration: none; color: var(--ink);
+    box-shadow: 0 0 0 1px var(--line), 0 24px 50px -28px #000; }
+  .shot img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 1.2s cubic-bezier(.2, .7, .2, 1); }
+  .shot:hover img { transform: scale(1.05); }
+  .shot span { position: absolute; left: 0; right: 0; bottom: 0; padding: 36px 14px 12px; font-size: 13.5px; background: linear-gradient(transparent, rgba(8, 7, 6, .88)); }
+  .shot span b { display: block; font-family: var(--serif); font-size: 19px; font-weight: 400; }
+  .shot:hover { color: var(--ink); }
+  @media (max-width: 640px) { .layout { padding: 24px 16px 40px; gap: 28px; } .recent { padding: 8px 16px 60px; } }
 </style>
 </head>
 <body>
 <div id="launch" role="button" tabindex="0" aria-label="Designed Living. Click to start">
-  <div class="stage" aria-hidden="true">
-    <div class="room">
-      <div class="floor"></div><div class="rug"></div>
-      <div class="wall w1"><div class="window"></div></div><div class="wall w2"></div>
-      <div class="piece sofa"></div><div class="piece table"></div><div class="piece plant"></div><div class="piece lamp"></div>
-    </div>
-  </div>
-  <div class="card" style="left: 9vw; top: 18vh" aria-hidden="true"><div class="sw"><span style="background:#f1ece4"></span><span style="background:#d8c9b1"></span><span style="background:#c8a57a"></span><span style="background:#5b4332"></span><span style="background:#2a2826"></span></div><p>Warm minimal · Lounge</p></div>
-  <div class="card" style="right: 10vw; top: 26vh; animation-delay: -2.5s, 0s" aria-hidden="true"><div class="sw"><span style="background:#ece3d6"></span><span style="background:#6a4a32"></span><span style="background:#b8653f"></span><span style="background:#c7ad84"></span><span style="background:#7b6243"></span></div><p>African modern · Dining</p></div>
-  <div class="card" style="left: 7vw; bottom: 22vh; animation-delay: -4.5s, 0s" aria-hidden="true"><div class="sw"><span style="background:#ece8e1"></span><span style="background:#cfc6b6"></span><span style="background:#b48d63"></span><span style="background:#8fa596"></span><span style="background:#9c9a94"></span></div><p>Spa calm · Main bathroom</p></div>
+  <div class="mosaic" id="mosaic" aria-hidden="true"></div>
+  <svg class="blueprint" viewBox="0 0 600 380" aria-hidden="true">
+    <path class="grid" d="M0 40H600M0 100H600M0 160H600M0 220H600M0 280H600M0 340H600M60 0V380M140 0V380M220 0V380M300 0V380M380 0V380M460 0V380M540 0V380"/>
+    <path d="M40 30H560V350H40Z M300 30V170 M300 220V350 M40 200H130 M180 200H300 M420 30V140 M420 190V350"/>
+    <path class="thin" d="M300 170A50 50 0 0 1 250 220 M130 200A50 50 0 0 0 180 250 M420 140A50 50 0 0 1 470 190 M210 350H270 M480 30H530"/>
+    <rect class="thin" x="80" y="70" width="150" height="70" rx="10"/><rect class="thin" x="340" y="240" width="70" height="90" rx="6"/>
+    <rect class="thin" x="450" y="230" width="80" height="100" rx="6"/>
+    <text x="120" y="290">LOUNGE</text><text x="330" y="100">KITCHEN</text><text x="455" y="215">BEDROOM</text>
+  </svg>
+  <div class="veil"></div>
   <div class="title">
     <div class="kicker">Plan · Style · Walk through</div>
-    <h1>Designed Living</h1>
+    <h1>Designed <em>Living</em></h1>
     <p>From a floor plan or a photo to a furnished home you can walk through.</p>
     <div class="load"><i></i></div>
   </div>
@@ -122,7 +132,8 @@
   <div class="layout">
     <section class="main" aria-labelledby="ask">
       <div>
-        <h1 id="ask">What do you have for this house?</h1>
+        <p class="eyebrow">New house</p>
+        <h1 id="ask">What do you have for <em>this house?</em></h1>
         <p class="sub">Pick one to start. A floor plan or a model gives you a 3D walkthrough; photos give you redesigned rooms and a mood board.</p>
       </div>
       <div class="sources" role="group" aria-label="Start from">
@@ -163,6 +174,10 @@
       <div class="note" id="where"></div>
     </aside>
   </div>
+  <section class="recent" id="recent" hidden aria-labelledby="recent-h">
+    <h2 id="recent-h">Recently designed rooms</h2>
+    <div class="shots" id="shots"></div>
+  </section>
 </div>
 
 <script>
@@ -175,6 +190,10 @@ async function call(path, body) {
   return j;
 }
 
+// ---- your designed rooms (real photos): the launch screen's wall, the house cards and the recent rooms
+const photoUrl = g => `/api/photo?id=${encodeURIComponent(g.id)}&room=${encodeURIComponent(g.room)}&t=${encodeURIComponent(g.made)}`;
+const gallery = call('/api/gallery').then(r => r.photos || []).catch(() => []);
+
 // ---- the launch screen: once per visit (sessionStorage), skipped by a click or a key
 const launch = $('launch'), start = $('start');
 let launched = false;
@@ -186,7 +205,17 @@ function enter() {
 }
 let seen = false; try { seen = sessionStorage.getItem('dl-launched') === '1'; } catch (e) {}
 if (seen || location.hash) { launch.remove(); launched = true; start.classList.add('in'); }
-else { launch.onclick = enter; addEventListener('keydown', enter, { once: true }); setTimeout(enter, 4400); }
+else {
+  launch.onclick = enter; addEventListener('keydown', enter, { once: true }); setTimeout(enter, 4400);
+  gallery.then(photos => {
+    if (!photos.length || launched) return;
+    const mosaic = $('mosaic'), cols = [0, 1, 2, 3].map(() => el('div', { class: 'col' }));
+    const tiles = []; while (tiles.length < 16) tiles.push(...photos);
+    tiles.slice(0, 16).forEach((g, i) => cols[i % 4].append(el('img', { src: photoUrl(g), alt: '' })));
+    cols.forEach(c => c.append(...[...c.children].map(n => n.cloneNode())));     // twice, so the drift loops
+    mosaic.append(...cols); launch.classList.add('has-photos');
+  });
+}
 
 // ---- where to start from
 const SOURCES = {
@@ -242,14 +271,22 @@ const KIND = { photos: 'from photos', obj: 'Sweet Home 3D', plan: 'floor plan' }
 async function houses() {
   const box = $('houses');
   try {
-    const { houses } = await call('/api/houses');
+    const [{ houses }, photos] = await Promise.all([call('/api/houses'), gallery]);
+    $('recent').hidden = !photos.length;
+    $('shots').replaceChildren(...photos.slice(0, 8).map(g => {
+      const a = el('a', { class: 'shot', href: 'house.html#' + encodeURIComponent(g.id) });
+      const cap = el('span'); cap.append(el('b', {}, g.room), g.title);
+      a.append(el('img', { src: photoUrl(g), alt: `${g.room}, ${g.title}`, loading: 'lazy' }), cap); return a;
+    }));
     box.replaceChildren();
     $('count').textContent = houses.length ? `· ${houses.length}` : '';
     if (!houses.length) box.append(el('p', { class: 'facts' }, 'No houses yet. Your first one starts on the left.'));
     for (const h of houses) {
       const a = el('a', { class: 'house', href: 'house.html#' + encodeURIComponent(h.id) });
       const t = el('div', { class: 'thumb', 'aria-hidden': 'true' });
-      for (const c of h.palette || []) { const s = el('span'); s.style.background = c; t.append(s); }
+      const shot = photos.find(g => g.id === h.id);
+      if (shot) t.append(el('img', { src: photoUrl(shot), alt: '' }));
+      else for (const c of h.palette || []) { const s = el('span'); s.style.background = c; t.append(s); }
       const d = el('div');
       d.append(el('b', {}, h.title));
       d.append(el('small', {}, [`${h.rooms} room${h.rooms === 1 ? '' : 's'}`, KIND[h.kind === 'photos' ? 'photos' : h.start || h.kind] || '', h.style].filter(Boolean).join(' · ')));

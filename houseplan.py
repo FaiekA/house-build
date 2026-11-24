@@ -147,6 +147,34 @@ def houses(files_root):
     return out
 
 
+def gallery(files_root, limit=24):
+    """The designed room photos of every house, newest first: [{id, room, title, style, made}]. The start page, the
+    launch screen and the style cards show these real pictures (Faiek, 2026-11-24: "use images")."""
+    out = []
+    base = root(files_root)
+    if not base.is_dir():
+        return out
+    for path in base.iterdir():
+        if not path.is_dir() or path.name.startswith(".") or not (path / "house.json").exists():
+            continue
+        try:
+            state = read_state(path)
+        except HouseError:
+            continue
+        d = state.get("design")
+        if not isinstance(d, dict) or not isinstance(d.get("rooms"), dict):
+            continue
+        house_style = d.get("style") or housedesign.DEFAULT_STYLE
+        for name, rd in d["rooms"].items():
+            if not isinstance(rd, dict) or not rd.get("photo") or not (path / DESIGN_DIR / str(rd["photo"])).is_file():
+                continue
+            own = rd.get("style") if rd.get("style") in housedesign.STYLES else house_style
+            out.append({"id": path.name, "room": name, "title": state.get("title") or path.name, "style": own,
+                        "made": str(rd.get("made") or "")})
+    out.sort(key=lambda g: g["made"], reverse=True)
+    return out[:limit]
+
+
 def remove(files_root, house_id, recycle=None):
     """A house's whole folder goes to the Recycle Bin (Windows, a fixed drive), never deleted for good. Elsewhere, or
     when Windows has no bin for that drive, it is moved to Houses/.deleted/ (hidden from the list). `recycle`

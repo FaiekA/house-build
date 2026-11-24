@@ -19,5 +19,9 @@ installed at `C:\DesignedLiving` on Faiek's PCs.
 - Modules: `houseplan.py` (houses, plan, export, mood board PDF), `housedesign.py` (styles + `STYLE_NOTES`, Gemini
   photo/read/locate, Claude plan rules, furnishing), `photorooms.py` (the room-photos route), `printing.py` (PDF by
   hand), `usage.py` (costs, features plan/design/photos), `recycle.py` (delete = Recycle Bin).
+- The walkthrough shows furniture as pictures cut out of each room's designed photo (`housedesign.cut_photo`: Gemini
+  boxes + masks, kept in `design/<room>.cuts.json`; `houseplan/engine/src/cutouts.js` turns them into upright cards
+  that face you). Drawn blocks only where a room has no photo or a piece has no cut-out. `/api/gallery` lists every
+  designed photo; the launch screen, start page and style cards show those real pictures.
 - Every Claude or Gemini call records its usage. Claude is called over raw HTTPS with streaming (no SDK).
 - `py app.py --selftest` must pass before calling a change done; it makes no model calls.

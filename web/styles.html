@@ -15,16 +15,23 @@
   .top p { margin: 10px 0 0; color: var(--ink-dim); font-size: 17px; max-width: 640px; }
   .scope { display: flex; flex-direction: column; gap: 10px; align-items: flex-end; }
   .chips { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-  .chips button { border-radius: 999px; padding: 8px 14px; min-height: 38px; }
+  .chips button { border-radius: 999px; padding: 7px 14px; min-height: 36px; font-size: 13.5px; }
   .chips button[aria-pressed=true] { border-color: var(--brass); background: rgba(209, 169, 101, .16); }
   #scope-line { font-size: 14px; color: var(--ink-dim); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 22px; }
-  .style { text-align: left; display: block; padding: 14px 14px 18px; border-radius: 18px; background: var(--panel); border: 1.5px solid var(--line);
-    color: var(--ink); font-weight: 400; transition: transform .25s ease, border-color .25s ease; min-height: 0; }
+  .style { text-align: left; display: block; padding: 12px 12px 18px; border-radius: 20px; background: linear-gradient(180deg, rgba(31, 28, 24, .95), rgba(20, 18, 16, .95)); border: 1px solid var(--line);
+    color: var(--ink); font-weight: 400; transition: transform .3s cubic-bezier(.2, .7, .2, 1), border-color .25s, box-shadow .3s; min-height: 0; box-shadow: var(--shadow); }
+  .style { display: flex; flex-direction: column; justify-content: flex-start; align-items: stretch; }
+  .style > * { flex: none; }
+  .style:hover:not(:disabled) { background: linear-gradient(180deg, rgba(36, 32, 27, .95), rgba(22, 20, 17, .95)); }
   .style:hover { transform: translateY(-4px); border-color: var(--line-2); }
-  .style[aria-pressed=true] { border-color: var(--brass); }
-  .vignette { position: relative; height: 180px; border-radius: 12px; overflow: hidden; }
+  .style[aria-pressed=true] { border-color: rgba(212, 171, 102, .75); box-shadow: 0 0 0 1px rgba(212, 171, 102, .35), 0 20px 50px -24px var(--brass-glow), var(--shadow); }
+  .vignette { position: relative; height: 190px; border-radius: 14px; overflow: hidden; }
   .vignette div { position: absolute; }
+  .vignette { box-shadow: 0 0 0 1px var(--line); }
+  .vignette.photo img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 1s cubic-bezier(.2, .7, .2, 1); }
+  .style:hover .vignette.photo img { transform: scale(1.05); }
+  .vignette.photo span { position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 10px 8px; font-size: 12px; color: var(--ink); background: linear-gradient(transparent, rgba(8, 7, 6, .85)); }
   .chipsw { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin-top: 12px; }
   .chipsw span { flex: 1; }
   .name { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 14px; }
@@ -70,7 +77,7 @@ async function call(path, body) {
   return j;
 }
 const id = decodeURIComponent(location.hash.slice(1));
-let styles = [], house = null, design = null, scope = '';      // scope: '' = the whole house, else a room's name
+let styles = [], shots = [], house = null, design = null, scope = '';      // scope: '' = the whole house, else a room's name
 
 function colour(pal, use, fallback) { const p = pal.find(p => p.use === use); return p ? p.hex : fallback; }
 function vignette(pal) {
@@ -101,7 +108,12 @@ function draw() {
   const grid = $('grid'); grid.replaceChildren();
   for (const s of styles) {
     const b = el('button', { type: 'button', class: 'style', 'aria-pressed': String(s.key === now) });
-    b.append(vignette(s.palette));
+    const shot = shots.find(g => g.style === s.key && (!house || g.id === id)) || shots.find(g => g.style === s.key);
+    if (shot) {                                    // a real room you designed in this style, else the drawn room
+      const f = el('div', { class: 'vignette photo' });
+      f.append(el('img', { src: `/api/photo?id=${encodeURIComponent(shot.id)}&room=${encodeURIComponent(shot.room)}&t=${encodeURIComponent(shot.made)}`, alt: '', loading: 'lazy' }), el('span', {}, `${shot.room} · ${shot.title}`));
+      b.append(f);
+    } else b.append(vignette(s.palette));
     const sw = el('div', { class: 'chipsw', 'aria-hidden': 'true' }); for (const p of s.palette) { const c = el('span', { title: p.name }); c.style.background = p.hex; sw.append(c); } b.append(sw);
     const n = el('div', { class: 'name' }); n.append(el('b', {}, s.name)); if (s.key === now) n.append(el('i', {}, 'Chosen')); b.append(n);
     b.append(el('div', { class: 'looks' }, s.looks));
@@ -141,6 +153,7 @@ async function pick(key) {
 
 (async () => {
   try { const r = await call('/api/styles'); styles = r.styles; } catch (err) { $('msg').textContent = err.message; return; }
+  try { shots = (await call('/api/gallery')).photos || []; } catch (e) {}
   if (id) {
     try {
       const v = await call('/api/house?id=' + encodeURIComponent(id));

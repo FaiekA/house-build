@@ -463,6 +463,8 @@ def api_get(route, query):
         return 200, {"houses": houseplan.houses(root)}
     if route == "/api/house":
         return 200, house_view(root, hid)
+    if route == "/api/gallery":
+        return 200, {"photos": houseplan.gallery(root)}
     if route == "/api/styles":
         return 200, {"styles": housedesign.styles_view(), "default": housedesign.DEFAULT_STYLE}
     if route == "/api/settings":
@@ -773,6 +775,8 @@ def selftest():
             problems.append("the colours read from the photo didn't reach the walkthrough")
         elif [c["kind"] for c in houseplan.house_data(tmp, hid)["design"]["rooms"]["Living room"]["cuts"]] != ["sofa"]:
             problems.append("the furniture cut out of the photo didn't reach the walkthrough")
+        elif sorted(g["room"] for g in houseplan.gallery(tmp)) != ["Kitchen", "Living room"]:
+            problems.append(f"the gallery of designed rooms: {houseplan.gallery(tmp)}")
         else:
             said.append("a plan house designed with stand-ins: a photo, palette, furniture and cut-outs per room")
         # a photos house redesigned with a stand-in for Nano Banana
